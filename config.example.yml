@@ -1,0 +1,108 @@
+# agent-devbox — host configuration example.
+#
+# Copy to inventory/host_vars/<host>.yml (or keep it in a private repo), then
+# uncomment what you need. Only devbox_admin_user is required; every other
+# line shows the default. Full reference: docs/configuration.md.
+#
+# Secret VALUES never go here. This file only says where they are swapped;
+# you store them on the server with:  sudo iron-proxy-set-secret <name>
+
+# --- Required -----------------------------------------------------------------
+# Your existing admin login on the server (the one with sudo and an SSH key).
+# devbox_admin_user: alice
+
+# --- Rollout ------------------------------------------------------------------
+# observe: nothing is blocked, everything that would be is logged.
+# enforce: default-deny for real. Start with observe, review, then enforce.
+# devbox_mode: observe
+
+# --- Agent user -----------------------------------------------------------------
+# devbox_agent_user: agent
+# Keys allowed to log in as the agent (your laptop, your IDE, T3 Code...).
+# Exclusive: keys not listed here are removed.
+# devbox_agent_ssh_keys:
+#   - "ssh-ed25519 AAAA... you@laptop"
+# devbox_workspace_root: /srv/work     # shared by you and the agent
+# devbox_harden_sshd: true             # keys only, no root login (for every user)
+
+# --- LLM and GitHub credentials (swapped by iron-proxy) ----------------------
+# claude_oauth: your Claude subscription token (claude setup-token).
+# github_pat:   a fine-grained GitHub token for git over HTTPS and gh.
+# Remove an entry if you do not use it.
+# devbox_builtin_secrets: [claude_oauth, github_pat]
+
+# Repositories the agent may push to (owner/repo). Limit the GitHub token to
+# the same repositories on GitHub's side.
+# devbox_github_write_repos:
+#   - you/project
+# SSH host aliases used in your clones (git@alias:owner/repo), rewritten to
+# HTTPS for the agent.
+# devbox_git_ssh_aliases: []
+
+# --- Allowlist ----------------------------------------------------------------
+# Presets (docs/configuration.md#presets). Add the ones of your stack (maven,
+# gradle, rubygems, packagist, nuget, conda, huggingface...), remove the ones
+# you do not use. Agent-specific setups (T3 Code, Hermes...): docs/agents.md.
+# Add vscode if you connect VS Code / Cursor as the agent.
+# devbox_allow_presets: [anthropic, openai_codex, github_read, npm, node, pypi, crates, golang, container_registries]
+
+# Your own rules: host or cidr, optionally restricted by methods and paths.
+# devbox_allow_rules_extra:
+#   - { host: "api.example.com" }
+#   - host: "status.example.com"
+#     methods: [GET]
+#     paths: ["/api/v1/*"]
+
+# --- Your services' API keys (swapped by iron-proxy) --------------------------
+# The agent's code sends proxy_value (put it in the project's .env); the real
+# value lives in /etc/iron-proxy/secrets/<name> (sudo iron-proxy-set-secret <name>).
+# devbox_secrets:
+#   - name: acme_api_key
+#     proxy_value: "acme-placeholder-0000000000"
+#     match_headers: ["X-Api-Key"]       # or ["Authorization"] for Bearer tokens
+#     hosts: ["api.acme.example"]
+#     allow: true                        # also allowlist the hosts
+#     pattern: "^ak_[A-Za-z0-9]{32}$"    # optional format check
+
+# --- Reaching an internal HTTP service through the proxy ----------------------
+# Internal addresses are denied by default. To let the agent query one
+# internal host, carve it out, allow it (read-only here), and open its port
+# for iron-proxy if it is not 80/443:
+# devbox_upstream_allow_cidrs: ["10.0.5.20/32"]
+# devbox_allow_rules_extra:
+#   - { cidr: "10.0.5.20/32", methods: [GET], paths: ["/api/*"] }
+# devbox_proxy_direct_egress:
+#   - { cidrs: ["10.0.5.20/32"], ports: [8080] }
+
+# --- Non-HTTP traffic (bypasses iron-proxy: keep it narrow) --------------------
+# devbox_agent_direct_egress:
+#   - name: staging-db                  # one host only: preferred
+#     proto: tcp
+#     ports: [5432]
+#     cidrs: ["198.51.100.7/32"]
+#   - preset: cloudflare_tunnel         # cloudflared, e.g. T3 Code's T3 Connect
+# devbox_agent_dns: true                # direct DNS to the host's resolvers
+# Loopback ports of other users' services the agent may use:
+# devbox_agent_loopback_ports: []
+# Ports where the agent's own servers accept connections from outside:
+# devbox_agent_inbound_ports: []
+
+# --- Agent tools ----------------------------------------------------------------
+# devbox_agent_clis: [claude, codex]    # also: hermes. Installed once, they update
+#                                       # themselves. See docs/agents.md.
+# devbox_agent_pkg_install: true        # sudo agent-pkg-install <package>
+# devbox_agent_capture_ports: []        # sudo agent-capture: pcap of the agent's own traffic
+# devbox_agent_env_extra: {}            # extra environment variables
+
+# --- Monitoring ---------------------------------------------------------------
+# devbox_monitoring_enabled: true
+# devbox_monitoring_retention: 30d
+# devbox_grafana_listen: "127.0.0.1:3000"
+# devbox_monitoring_scrape_targets:
+#   - { job: my-app, targets: ["127.0.0.1:8000"] }
+
+# --- Tailscale (optional) -------------------------------------------------------
+# devbox_tailscale_enabled: false
+# devbox_tailscale_tags: []             # e.g. ["tag:devbox"]
+# devbox_tailscale_ssh: false
+# devbox_tailscale_serve_grafana: true  # https://<host>.<tailnet>.ts.net, tailnet only

@@ -1,0 +1,36 @@
+# Managed by agent-devbox (monitoring role). Single process, local filesystem.
+auth_enabled: false
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: {{ monitoring_ports.loki }}
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: {{ monitoring_ports.loki_grpc }}
+  log_level: warn
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/lib/devbox-loki
+  replication_factor: 1
+  ring:
+    kvstore: { store: inmemory }
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/devbox-loki/chunks
+      rules_directory: /var/lib/devbox-loki/rules
+memberlist:
+  bind_addr: [127.0.0.1]
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index: { prefix: index_, period: 24h }
+limits_config:
+  retention_period: {{ devbox_monitoring_retention }}
+  allow_structured_metadata: true
+compactor:
+  working_directory: /var/lib/devbox-loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+analytics:
+  reporting_enabled: false

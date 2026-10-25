@@ -1,0 +1,48 @@
+# Managed by agent-devbox (iron_proxy role).
+[Unit]
+Description=iron-proxy egress proxy for the agent zone
+Documentation=https://github.com/ironsh/iron-proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ devbox_proxy_user }}
+Group={{ devbox_proxy_user }}
+# Read by systemd before dropping privileges; holds IRON_MANAGEMENT_API_KEY.
+EnvironmentFile=/etc/iron-proxy/management.env
+ExecStart=/usr/local/bin/iron-proxy -config /etc/iron-proxy/proxy.yaml
+ExecReload=+/usr/local/sbin/iron-proxy-reload
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=65536
+UMask=0077
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

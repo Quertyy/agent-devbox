@@ -1,0 +1,16 @@
+# RHEL, Rocky, AlmaLinux, CentOS Stream. /usr/bin/curl is satisfied by curl
+# or curl-minimal, whichever the image ships.
+__devbox_pkg_backend: dnf
+# bubblewrap: the sandbox Claude Code and Codex use for the commands they run.
+__devbox_base_packages: [nftables, sudo, /usr/bin/curl, ca-certificates, openssl, tar, unzip, python3, git, bubblewrap, procps-ng, tcpdump, acl, systemd-pam]
+# The real file: a systemd path unit watches it (the usual path is a symlink).
+__devbox_system_ca_bundle: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+__devbox_ssh_service: sshd
+# Rocky/Alma repository ids; RHEL itself names them after the release.
+__devbox_pkg_dnf_repos: >-
+  {{ ['rhel-' ~ ansible_facts['distribution_major_version'] ~ '-for-' ~ ansible_facts['architecture'] ~ '-baseos-rpms',
+      'rhel-' ~ ansible_facts['distribution_major_version'] ~ '-for-' ~ ansible_facts['architecture'] ~ '-appstream-rpms']
+     if ansible_facts['distribution'] == 'RedHat' else ['baseos', 'appstream'] }}
+# System libraries the agent CLIs need (installed as root before their installers).
+__devbox_cli_packages:
+  hermes: [libatomic]

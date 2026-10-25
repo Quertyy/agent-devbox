@@ -1,0 +1,65 @@
+# Public settings of agent-devbox, with their defaults. Every key is
+# documented in meta/argument_specs.yml (rendered in docs/configuration.md)
+# and validated when the playbook starts.
+
+# --- Rollout
+devbox_mode: observe
+
+# --- Zones
+devbox_admin_user: ""
+devbox_agent_user: agent
+devbox_agent_ssh_keys: []
+devbox_share_group: devshare
+devbox_workspace_root: /srv/work
+devbox_proxy_user: iron-proxy
+devbox_harden_sshd: true
+
+# --- Secrets swapped by iron-proxy
+devbox_builtin_secrets: [claude_oauth, github_pat]
+devbox_secrets: []
+
+# --- Egress allowlist
+devbox_allow_presets: [anthropic, openai_codex, github_read, npm, node, pypi, crates, golang, container_registries]
+devbox_allow_rules_extra: []
+devbox_github_write_repos: []
+devbox_git_ssh_aliases: []
+devbox_upstream_deny_cidrs_extra: []
+devbox_upstream_allow_cidrs: []
+
+# --- Network exceptions
+devbox_agent_dns: true
+devbox_agent_direct_egress: []
+devbox_proxy_direct_egress: []
+devbox_agent_loopback_ports: []
+devbox_agent_inbound_ports: []
+
+# --- Agent environment and helpers
+devbox_agent_clis: [claude, codex]
+devbox_agent_env_extra: {}
+devbox_agent_pkg_install: true
+devbox_pkg_apt_sources: ""
+devbox_pkg_dnf_repos: "{{ __devbox_pkg_dnf_repos | default([]) }}"
+devbox_agent_capture_ports: []
+
+# --- Monitoring
+devbox_monitoring_enabled: true
+devbox_monitoring_retention: 30d
+devbox_grafana_listen: "127.0.0.1:3000"
+devbox_monitoring_scrape_targets: []
+devbox_monitoring_journal_units_extra: []
+
+# --- Tailscale
+devbox_tailscale_enabled: false
+devbox_tailscale_hostname: "{{ inventory_hostname_short }}"
+devbox_tailscale_tags: []
+devbox_tailscale_ssh: false
+devbox_tailscale_authkey_file: /etc/agent-devbox/tailscale-authkey
+devbox_tailscale_serve_grafana: true
+
+# --- Local ports (loopback only; change only on conflict)
+devbox_proxy_tunnel_port: 3128
+devbox_proxy_https_port: 18443
+devbox_proxy_http_port: 18081
+devbox_proxy_management_port: 9092
+devbox_proxy_metrics_port: 9464
+devbox_obs_gateway_port: 9095

@@ -1,0 +1,42 @@
+# Test inventory: one throwaway container per distribution (see run.sh).
+devbox:
+  hosts:
+    devbox-test-debian:
+      # One distribution also installs an agent CLI end to end, through the proxy.
+      devbox_agent_clis: [hermes]
+      devbox_allow_presets: [anthropic, openai_codex, hermes, openrouter, telegram, github_read, npm, node, pypi, crates, golang, container_registries]
+    devbox-test-ubuntu:
+      # The default CLIs, installed end to end through the proxy.
+      devbox_agent_clis: [claude, codex]
+    devbox-test-rocky: {}
+  vars:
+    ansible_connection: containers.podman.podman
+    ansible_python_interpreter: /usr/bin/python3
+    devbox_admin_user: admin
+    devbox_agent_ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDevboxTestKeyDevboxTestKeyDevboxTestKey1 agent@test"
+    devbox_github_write_repos: [example/project]
+    devbox_git_ssh_aliases: [project-alias]
+    # run.sh stores demo_token and checks it is swapped for httpbin.org only.
+    devbox_secrets:
+      - name: demo_token
+        proxy_value: "demo-placeholder-0001"
+        match_headers: ["X-Demo-Token"]
+        hosts: ["httpbin.org"]
+        allow: true
+        pattern: "^demo-[a-z0-9]+$"
+    devbox_allow_rules_extra:
+      - { host: "postman-echo.com", methods: [GET] }     # echoes headers, no secret there
+      - { cidr: "10.255.255.1/32", methods: [GET] }      # allowed but denied upstream (502)
+    devbox_agent_inbound_ports: [4001]
+    devbox_upstream_allow_cidrs: ["100.101.102.103/32"]
+    devbox_agent_direct_egress:
+      - preset: cloudflare_tunnel
+      - { name: database, proto: tcp, ports: [5432] }
+    devbox_proxy_direct_egress:
+      - { cidrs: ["203.0.113.10/32"], ports: [9090] }
+    devbox_agent_capture_ports: [5432]
+    devbox_agent_env_extra: { EXAMPLE_FLAG: "1" }
+    devbox_monitoring_scrape_targets:
+      - { job: example-app, targets: ["127.0.0.1:8000"] }
+    devbox_agent_clis: []

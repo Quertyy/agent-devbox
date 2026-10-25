@@ -1,0 +1,85 @@
+# Three zones: the admin (existing account, untouched apart from joining the
+# share group), the agent (no sudo, no secrets) and iron-proxy (holds the
+# secrets, no login).
+
+- name: Create the share group
+  ansible.builtin.group:
+    name: "{{ devbox_share_group }}"
+
+- name: Create the iron-proxy system user
+  ansible.builtin.user:
+    name: "{{ devbox_proxy_user }}"
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+
+- name: Create the agent user
+  ansible.builtin.user:
+    name: "{{ devbox_agent_user }}"
+    shell: /bin/bash
+    create_home: true
+    groups: ["{{ devbox_share_group }}"]
+    append: false            # never root, adm, wheel, sudo, docker...
+    password_lock: true
+
+- name: Add the admin to the share group (effective at the admin's next login)
+  ansible.builtin.user:
+    name: "{{ devbox_admin_user }}"
+    groups: ["{{ devbox_share_group }}"]
+    append: true
+
+- name: Read the agent account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ devbox_agent_user }}"
+  check_mode: false
+
+- name: Remember the agent uid and home
+  ansible.builtin.set_fact:
+    __devbox_agent_uid: "{{ ansible_facts['getent_passwd'][devbox_agent_user][1] }}"
+    __devbox_agent_home: "{{ ansible_facts['getent_passwd'][devbox_agent_user][4] }}"
+
+- name: Restrict the agent home
+  ansible.builtin.file:
+    path: "{{ __devbox_agent_home }}"
+    state: directory
+    mode: "0750"
+    follow: false
+
+# Everything inside the agent home is written as the agent: the agent
+# controls that directory, so root must never follow paths in it.
+- name: Authorize SSH keys for the agent (exclusive)
+  ansible.posix.authorized_key:
+    user: "{{ devbox_agent_user }}"
+    key: "{{ devbox_agent_ssh_keys | join('\n') }}"
+    exclusive: true
+  become: true
+  become_user: "{{ devbox_agent_user }}"
+  when: devbox_agent_ssh_keys | length > 0
+
+- name: Remove every agent SSH key when none is configured
+  ansible.builtin.file:
+    path: "{{ __devbox_agent_home }}/.ssh/authorized_keys"
+    state: absent
+  become: true
+  become_user: "{{ devbox_agent_user }}"
+  when: devbox_agent_ssh_keys | length == 0
+
+- name: Keep the agent's systemd user manager running (linger)
+  ansible.builtin.command: loginctl enable-linger {{ devbox_agent_user }}
+  args:
+    creates: "/var/lib/systemd/linger/{{ devbox_agent_user }}"
+
+- name: Start the agent's user manager now
+  ansible.builtin.systemd_service:
+    name: "user@{{ __devbox_agent_uid }}.service"
+    state: started
+
+- name: Create the shared workspace root
+  ansible.builtin.file:
+    path: "{{ devbox_workspace_root }}"
+    state: directory
+    owner: root
+    group: "{{ devbox_share_group }}"
+    mode: "2775"

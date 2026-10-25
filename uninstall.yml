@@ -1,0 +1,134 @@
+# Remove agent-devbox from a server. Keeps the shared workspace, and keeps the
+# agent account and home unless asked:
+#   ansible-playbook uninstall.yml                                       # services, config, secrets
+#   ansible-playbook uninstall.yml -e devbox_uninstall_agent_user=true   # + agent account and home
+#   -e devbox_uninstall_keep_cache=true keeps the downloaded releases
+- name: Uninstall agent-devbox
+  hosts: devbox
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Refuse a checkout other users can modify (it runs as root on the servers)
+      ansible.builtin.import_tasks: tasks/check-checkout.yml
+
+    - name: Gather facts
+      ansible.builtin.setup:
+  vars:
+    devbox_uninstall_agent_user: false
+    devbox_uninstall_keep_cache: false
+  tasks:
+    - name: Load shared settings (host configuration still wins)
+      ansible.builtin.import_role:
+        name: common
+        tasks_from: noop.yml
+
+    - name: Remove the monitoring stack
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: absent.yml
+
+    - name: Stop and disable the services (removes the nftables table)
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: [iron-proxy.service, agent-egress-firewall.service, iron-proxy-agent-bundle.path]
+      failed_when: false
+
+    - name: Read the agent account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ devbox_agent_user }}"
+        fail_key: false
+
+    - name: Remove files, units and secrets
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/iron-proxy.service
+        - /etc/systemd/system/agent-egress-firewall.service
+        - /etc/systemd/system/iron-proxy-agent-bundle.service
+        - /etc/systemd/system/iron-proxy-agent-bundle.path
+        - "/etc/systemd/system/user@{{ ansible_facts['getent_passwd'][devbox_agent_user][1] | default('none') }}.service.d/agent-egress.conf"
+        - "/etc/systemd/system/user@{{ ansible_facts['getent_passwd'][devbox_agent_user][1] | default('none') }}.service.d"
+        - /etc/iron-proxy
+        - "{{ __devbox_config_dir }}"
+        - /usr/local/share/iron-proxy
+        - /usr/local/bin/iron-proxy
+        - /usr/local/sbin/iron-proxy-reload
+        - /usr/local/sbin/iron-proxy-set-secret
+        - /usr/local/sbin/iron-proxy-agent-bundle
+        - /usr/local/sbin/agent-pkg-install
+        - /usr/local/sbin/agent-capture
+        - /etc/sudoers.d/agent-devbox
+        - /etc/ssh/sshd_config.d/10-devbox-hardening.conf
+        - /etc/ssh/sshd_config.d/90-agent-devbox.conf
+        - /var/lib/agent-pkg
+        - /var/lib/agent-devbox
+
+    - name: Remove the downloaded releases
+      ansible.builtin.file:
+        path: "{{ __devbox_cache_dir }}"
+        state: absent
+      when: not devbox_uninstall_keep_cache | bool
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Reload sshd
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: reloaded
+      loop: [ssh, sshd]
+      failed_when: false
+
+    - name: Clean the kept agent account
+      when: not devbox_uninstall_agent_user | bool and devbox_agent_user in ansible_facts['getent_passwd']
+      become: true
+      become_user: "{{ devbox_agent_user }}"
+      block:
+        - name: Remove the environment hook from the agent's login shells
+          ansible.builtin.blockinfile:
+            path: "{{ ansible_facts['getent_passwd'][devbox_agent_user][4] }}/.profile"
+            marker: "# {mark} agent-devbox"
+            state: absent
+
+        - name: Remove the environment link of the agent's user services
+          ansible.builtin.file:
+            path: "{{ ansible_facts['getent_passwd'][devbox_agent_user][4] }}/.config/environment.d/10-agent-devbox.conf"
+            state: absent
+
+    - name: Remove the agent account, its home and its captures
+      when: devbox_uninstall_agent_user | bool
+      block:
+        - name: Disable linger
+          ansible.builtin.command: loginctl disable-linger {{ devbox_agent_user }}
+          args:
+            removes: "/var/lib/systemd/linger/{{ devbox_agent_user }}"
+
+        - name: Remove the agent user
+          ansible.builtin.user:
+            name: "{{ devbox_agent_user }}"
+            state: absent
+            remove: true
+            force: true
+
+        - name: Remove the captures
+          ansible.builtin.file:
+            path: /var/lib/agent-captures
+            state: absent
+
+    - name: Remove the iron-proxy user
+      ansible.builtin.user:
+        name: "{{ devbox_proxy_user }}"
+        state: absent
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: >-
+          agent-devbox removed. Kept: {{ devbox_workspace_root }} (group
+          {{ devbox_share_group }}){{ '' if devbox_uninstall_agent_user | bool else
+          ', the ' ~ devbox_agent_user ~ ' account and its home (-e devbox_uninstall_agent_user=true to remove them)' }}.
+          Tailscale, if installed, is left as is.

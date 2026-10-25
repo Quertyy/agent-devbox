@@ -1,0 +1,35 @@
+# Confine AI coding agents on a dev server: one agent user whose egress goes
+# through iron-proxy (default-deny, secrets swapped at the boundary), an
+# nftables policy per UID, and an optional local monitoring stack.
+#   ansible-playbook site.yml [--check --diff]
+# Roles are not tagged on purpose: role-level tags defeat the deduplication of
+# role dependencies, and every role depends on common.
+
+- name: Agent devbox
+  hosts: devbox
+  become: true
+  # The checkout is checked before anything touches the servers, facts included.
+  gather_facts: false
+  pre_tasks:
+    - name: Refuse a checkout other users can modify (it runs as root on the servers)
+      ansible.builtin.import_tasks: tasks/check-checkout.yml
+
+    - name: Gather facts
+      ansible.builtin.setup:
+  roles:
+    - role: common
+    - role: zones
+    - role: iron_proxy
+    - role: tailscale
+      when: devbox_tailscale_enabled | bool
+    - role: egress_firewall
+    - role: agent_env
+    - role: agent_helpers
+    - role: monitoring
+      when: devbox_monitoring_enabled | bool
+  tasks:
+    - name: Remove the monitoring stack when disabled
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: absent.yml
+      when: not devbox_monitoring_enabled | bool

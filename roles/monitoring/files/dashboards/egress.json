@@ -1,0 +1,350 @@
+{
+  "uid": "devbox-egress",
+  "title": "agent-devbox / Egress",
+  "description": "What the agent zone sends out: iron-proxy audit and nftables policy.",
+  "tags": [
+    "agent-devbox"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Proxied requests by outcome",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (action) (count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" [$__auto]))",
+          "legendFormat": "{{action}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        },
+        {
+          "expr": "sum(count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" | allowlist=\"warn\" [$__auto]))",
+          "legendFormat": "would be blocked (observe)",
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "description": "allow / reject / error per iron-proxy audit entry. In observe mode, 'would be blocked' counts requests the allowlist only logged."
+    },
+    {
+      "id": 2,
+      "title": "Would be blocked / blocked (24h)",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" | allowlist=\"warn\" or action=\"reject\" [$__range]))",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Hosts outside the allowlist (review before enforcing)",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "topk(50, sum by (host, method) (count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" | allowlist=\"warn\" or action=\"reject\" [$__range])))",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "Requests",
+              "who": "user",
+              "dst": "destination",
+              "dport": "port"
+            }
+          }
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Requests",
+            "desc": true
+          }
+        ],
+        "showHeader": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "Top allowed hosts",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "topk(50, sum by (host) (count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" | action=\"allow\" | allowlist!=\"warn\" [$__range])))",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "Requests",
+              "who": "user",
+              "dst": "destination",
+              "dport": "port"
+            }
+          }
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Requests",
+            "desc": true
+          }
+        ],
+        "showHeader": true
+      }
+    },
+    {
+      "id": 5,
+      "title": "Secret swaps",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (secret) (count_over_time({unit=\"iron-proxy.service\"} |= \"\\\"swapped\\\"\" | json secret=\"request_transforms[1].annotations.swapped[0].secret\" [$__auto]))",
+          "legendFormat": "{{secret}}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "description": "Placeholders replaced by real secrets at egress (secret names only, never values)."
+    },
+    {
+      "id": 6,
+      "title": "Firewall: connections outside the policy",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 18,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "topk(50, sum by (who, dst, proto, dport) (count_over_time({transport=\"kernel\"} |~ \"(agent|proxy)-egress: \" | regexp \"(?P<who>agent|proxy)-egress: .* DST=(?P<dst>[^ ]+) .*PROTO=(?P<proto>[A-Z0-9]+)(?: SPT=[0-9]+ DPT=(?P<dport>[0-9]+))?\" [$__range])))",
+          "queryType": "instant",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "description": "nftables log lines agent-egress:/proxy-egress:. Logged and accepted in observe mode, rejected in enforce mode.",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "Connections",
+              "who": "user",
+              "dst": "destination",
+              "dport": "port"
+            }
+          }
+        }
+      ],
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Connections",
+            "desc": true
+          }
+        ],
+        "showHeader": true
+      }
+    },
+    {
+      "id": 7,
+      "title": "Recent requests outside the allowlist",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "{unit=\"iron-proxy.service\"} |= \"\\\"msg\\\":\\\"request\\\"\" | json method=\"audit.method\", host=\"audit.host\", action=\"audit.action\", status=\"audit.status_code\", allowlist=\"request_transforms[0].annotations.action\" | method != \"CONNECT\" | allowlist=\"warn\" or action=\"reject\" | line_format \"{{if eq .allowlist \\\"warn\\\"}}would block{{else}}{{.action}}{{end}} {{.status}} {{.method}} {{.host}}\"",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 8,
+      "title": "Privileged helpers and secret updates",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "devbox-loki"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 12,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "{identifier=~\"agent-pkg-install|agent-capture|iron-proxy-set-secret\", zone!=\"agent\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "devbox-loki"
+          }
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  }
+}

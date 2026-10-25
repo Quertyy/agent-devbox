@@ -1,0 +1,193 @@
+# Prometheus, Loki, Alloy, Grafana and node_exporter from pinned upstream
+# releases (identical on every distro), each running under a systemd
+# DynamicUser bound to 127.0.0.1, plus a read-only query gateway for the agent.
+
+- name: Describe the components
+  ansible.builtin.set_fact:
+    __monitoring_components:
+      - { name: prometheus, bin: prometheus, strip: true }
+      - { name: node_exporter, bin: node_exporter, strip: true }
+      - { name: loki, bin: "loki-linux-{{ __devbox_arch }}", strip: false }
+      - { name: alloy, bin: "alloy-linux-{{ __devbox_arch }}", strip: false }
+      - { name: grafana, bin: bin/grafana, strip: true }
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/agent-devbox
+    - "{{ __devbox_config_dir }}/monitoring"
+    - "{{ __devbox_config_dir }}/monitoring/grafana/provisioning/datasources"
+    - "{{ __devbox_config_dir }}/monitoring/grafana/provisioning/dashboards"
+    - "{{ __devbox_config_dir }}/monitoring/grafana/provisioning/plugins"
+    - "{{ __devbox_config_dir }}/monitoring/grafana/provisioning/alerting"
+    - "{{ __devbox_config_dir }}/monitoring/grafana/dashboards"
+    - /var/lib/agent-devbox/textfile
+
+- name: Download releases (pinned sha256)
+  ansible.builtin.get_url:
+    url: "{{ __rel.url | replace('{version}', __rel.version) | replace('{arch}', __devbox_arch) }}"
+    dest: "{{ __archive }}"
+    checksum: "sha256:{{ __rel.sha256[__devbox_arch] }}"
+    mode: "0600"
+  loop: "{{ __monitoring_components }}"
+  loop_control: { label: "{{ item.name }} {{ __rel.version }}" }
+  vars:
+    __rel: "{{ monitoring_releases[item.name] }}"
+    __archive: "{{ __devbox_cache_dir }}/{{ item.name }}-{{ __rel.version }}-{{ __devbox_arch }}.{{ 'tar.gz' if item.strip else 'zip' }}"
+    __dir: "/opt/agent-devbox/{{ item.name }}-{{ __rel.version }}"
+
+- name: Create release directories
+  ansible.builtin.file:
+    path: "{{ __dir }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ __monitoring_components }}"
+  loop_control: { label: "{{ item.name }}" }
+  vars:
+    __rel: "{{ monitoring_releases[item.name] }}"
+    __archive: "{{ __devbox_cache_dir }}/{{ item.name }}-{{ __rel.version }}-{{ __devbox_arch }}.{{ 'tar.gz' if item.strip else 'zip' }}"
+    __dir: "/opt/agent-devbox/{{ item.name }}-{{ __rel.version }}"
+
+- name: Extract releases
+  ansible.builtin.unarchive:
+    src: "{{ __archive }}"
+    dest: "{{ __dir }}"
+    remote_src: true
+    extra_opts: "{{ ['--strip-components=1'] if item.strip else [] }}"
+    creates: "{{ __dir }}/{{ item.bin }}"
+  loop: "{{ __monitoring_components }}"
+  loop_control: { label: "{{ item.name }}" }
+  when: not ansible_check_mode
+  vars:
+    __rel: "{{ monitoring_releases[item.name] }}"
+    __archive: "{{ __devbox_cache_dir }}/{{ item.name }}-{{ __rel.version }}-{{ __devbox_arch }}.{{ 'tar.gz' if item.strip else 'zip' }}"
+    __dir: "/opt/agent-devbox/{{ item.name }}-{{ __rel.version }}"
+
+# Some releases ship their binary without the executable bit (Alloy's zip).
+- name: Make the binaries executable
+  ansible.builtin.file:
+    path: "/opt/agent-devbox/{{ item.name }}-{{ monitoring_releases[item.name].version }}/{{ item.bin }}"
+    mode: "0755"
+  loop: "{{ __monitoring_components }}"
+  loop_control: { label: "{{ item.name }}" }
+  when: not ansible_check_mode
+
+- name: Point the current version links
+  ansible.builtin.file:
+    src: "/opt/agent-devbox/{{ item.name }}-{{ monitoring_releases[item.name].version }}"
+    dest: "/opt/agent-devbox/{{ item.name }}"
+    state: link
+  loop: "{{ __monitoring_components }}"
+  loop_control: { label: "{{ item.name }}" }
+  when: not ansible_check_mode
+  notify: "Restart {{ item.name }}"
+
+- name: Generate the Grafana admin password (once, readable by root only)
+  ansible.builtin.shell: |
+    umask 077
+    printf 'GF_SECURITY_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 16)" > {{ __devbox_config_dir }}/grafana.env
+  args:
+    creates: "{{ __devbox_config_dir }}/grafana.env"
+
+- name: Render configuration files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ __devbox_config_dir }}/monitoring/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - { src: prometheus.yml.j2, dest: prometheus.yml, svc: prometheus }
+    - { src: alerts.yml.j2, dest: alerts.yml, svc: prometheus }
+    - { src: loki.yml.j2, dest: loki.yml, svc: loki }
+    - { src: alloy.alloy.j2, dest: alloy.alloy, svc: alloy }
+    - { src: grafana.ini.j2, dest: grafana/grafana.ini, svc: grafana }
+    - { src: grafana-datasources.yml.j2, dest: grafana/provisioning/datasources/devbox.yml, svc: grafana }
+    - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/devbox.yml, svc: grafana }
+  loop_control: { label: "{{ item.dest }}" }
+  notify: "Restart {{ item.svc }}"
+
+- name: Install dashboards
+  ansible.builtin.copy:
+    src: dashboards/
+    dest: "{{ __devbox_config_dir }}/monitoring/grafana/dashboards/"
+    mode: "0644"
+
+- name: Install the read-only query gateway and the textfile collector
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/usr/local/sbin/{{ item }}"
+    mode: "0755"
+  loop: [devbox-obs-gateway, devbox-textfile]
+  notify: Restart obs_gateway
+
+- name: Install service units
+  ansible.builtin.template:
+    src: unit.service.j2
+    dest: "/etc/systemd/system/devbox-{{ item.key | replace('_', '-') }}.service"
+    mode: "0644"
+  loop: "{{ monitoring_units | dict2items }}"
+  loop_control: { label: "devbox-{{ item.key }}" }
+  notify: "Restart {{ item.key }}"
+
+- name: Install the textfile collector timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: devbox-textfile.service
+      content: |
+        # Managed by agent-devbox (monitoring role).
+        [Unit]
+        Description=agent-devbox metrics (CA expiry, secrets, mode) for node_exporter
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/devbox-textfile
+    - name: devbox-textfile.timer
+      content: |
+        # Managed by agent-devbox (monitoring role).
+        [Unit]
+        Description=Refresh agent-devbox metrics
+        [Timer]
+        OnBootSec=30s
+        OnUnitActiveSec=1min
+        AccuracySec=5s
+        [Install]
+        WantedBy=timers.target
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Enable and start the stack
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+  loop: "{{ (monitoring_units.keys() | map('replace', '_', '-') | map('regex_replace', '^(.*)$', 'devbox-\\1.service') | list) + ['devbox-textfile.timer'] }}"
+
+- name: Refresh devbox metrics now  # noqa: command-instead-of-module (oneshot, always re-run)
+  ansible.builtin.command: systemctl start devbox-textfile.service
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Apply pending monitoring changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Grafana
+  ansible.builtin.uri:
+    url: "http://{{ devbox_grafana_listen }}/api/health"
+  register: __monitoring_grafana_health
+  until: __monitoring_grafana_health.status == 200
+  retries: 30
+  delay: 2
+  environment: { no_proxy: "*" }
+  when: not ansible_check_mode
+
+- name: Show how to reach Grafana
+  ansible.builtin.debug:
+    msg: >-
+      Grafana: http://{{ devbox_grafana_listen }} (user admin, password:
+      sudo cat {{ __devbox_config_dir }}/grafana.env). From your laptop:
+      ssh -L 3000:{{ devbox_grafana_listen }} {{ devbox_admin_user }}@{{ inventory_hostname }}

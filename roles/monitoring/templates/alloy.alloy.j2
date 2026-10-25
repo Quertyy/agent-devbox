@@ -1,0 +1,64 @@
+// Managed by agent-devbox (monitoring role).
+// Ships to Loki only what concerns the agent zone, because the agent can
+// query Loki through the read-only gateway: devbox units, the devbox helper
+// commands, the agent's own processes, and the egress-policy kernel lines.
+// The admin's other logs never leave the journal. Helper lines are only
+// trusted from root (uid 0): the agent can write any syslog identifier.
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__systemd_user_unit"]
+    target_label  = "user_unit"
+  }
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    target_label  = "identifier"
+  }
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label  = "transport"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+  rule {
+    source_labels = ["__journal__uid"]
+    regex         = "{{ __devbox_agent_uid }}"
+    replacement   = "agent"
+    target_label  = "zone"
+  }
+  rule {
+    source_labels = ["__journal__systemd_unit", "__journal_syslog_identifier", "__journal__uid", "__journal__transport"]
+    separator     = ";"
+    regex         = "({{ (['iron-proxy', 'agent-egress-firewall', 'devbox-[a-z-]+'] + devbox_monitoring_journal_units_extra) | join('|') }})[.]service;.*|.*;(agent-pkg-install|agent-capture|iron-proxy-set-secret);0;.*|.*;.*;{{ __devbox_agent_uid }};.*|.*;.*;.*;kernel"
+    action        = "keep"
+  }
+}
+
+loki.source.journal "devbox" {
+  forward_to    = [loki.process.devbox.receiver]
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { job = "journal" }
+  max_age       = "12h"
+}
+
+loki.process "devbox" {
+  forward_to = [loki.write.local.receiver]
+  // Kernel messages: keep only the egress policy's log lines.
+  stage.match {
+    selector = "{transport=\"kernel\"} !~ \"(agent|proxy)-egress: \""
+    action   = "drop"
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://127.0.0.1:{{ monitoring_ports.loki }}/loki/api/v1/push"
+  }
+}

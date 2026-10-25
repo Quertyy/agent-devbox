@@ -1,0 +1,4 @@
+# Extra collections for the test suite (tests/run.sh).
+collections:
+  - name: containers.podman
+    version: "1.21.2"

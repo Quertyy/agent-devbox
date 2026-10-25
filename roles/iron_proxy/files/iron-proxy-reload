@@ -1,0 +1,14 @@
+#!/bin/bash
+# Reload iron-proxy's config and secrets through its loopback management API
+# (used by `systemctl reload iron-proxy`). Root only: the bearer token lives in
+# a root-only file. Waits for the API, so it is safe right after a restart.
+set -euo pipefail
+[[ $EUID -eq 0 ]] || { echo "iron-proxy-reload: run as root" >&2; exit 1; }
+token=$(sed -n 's/^IRON_MANAGEMENT_API_KEY=//p' /etc/iron-proxy/management.env)
+port=$(sed -n 's/^IRON_MANAGEMENT_PORT=//p' /etc/iron-proxy/management.env)
+[[ -n $token && -n $port ]] || { echo "iron-proxy-reload: management.env incomplete" >&2; exit 1; }
+# Header on stdin, never on the command line (visible in ps).
+printf 'header = "Authorization: Bearer %s"\n' "$token" |
+  curl -sS --fail-with-body -m 15 --retry 15 --retry-delay 1 --retry-connrefused \
+    --noproxy '*' -K - -X POST "http://127.0.0.1:$port/v1/reload"
+echo

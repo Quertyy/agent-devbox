@@ -1,0 +1,20 @@
+__agent_helpers_list: >-
+  {{ (['/usr/local/sbin/agent-pkg-install'] if devbox_agent_pkg_install | bool else [])
+     + (['/usr/local/sbin/agent-capture'] if devbox_agent_capture_ports | length > 0 else []) }}
+
+# Packages agent-pkg-install refuses, also as dependencies: daemons that relay
+# data to the network under their own user (outside the agent's egress
+# policy). Mail transport agents are the common case.
+__agent_helpers_refused:
+  - postfix
+  - exim4?(-daemon-[a-z]+|-base|-config)?
+  - exim
+  - sendmail(-bin|-base|-cf)?
+  - nullmailer
+  - ssmtp
+  - msmtp-mta
+  - opensmtpd
+  - dma
+  - courier-mta
+  - masqmail
+  - esmtp-run

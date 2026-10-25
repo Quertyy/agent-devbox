@@ -1,0 +1,14 @@
+# Managed by agent-devbox (monitoring role).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: devbox-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:{{ monitoring_ports.prometheus }}
+    isDefault: true
+  - name: Loki
+    uid: devbox-loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:{{ monitoring_ports.loki }}

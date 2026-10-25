@@ -1,0 +1,32 @@
+# Internal constants shared by every role (not settings).
+
+# Placeholders the agent sends; iron-proxy swaps in the real values.
+__devbox_fake_claude_token: "sk-ant-oat01-ironproxy-placeholder-0000000000000000000000000000000000000000000000000000000000000000"
+__devbox_fake_github_token: "github_pat_ironproxy_placeholder_000000000000000000000000000000000000000000000000000000000000"
+
+__devbox_builtin_secret_defs:
+  claude_oauth:
+    proxy_value: "{{ __devbox_fake_claude_token }}"
+    match_headers: ["Authorization"]
+    hosts: ["api.anthropic.com"]
+    pattern: "^sk-ant-oat01-[A-Za-z0-9_-]{60,}$"
+  github_pat:
+    proxy_value: "{{ __devbox_fake_github_token }}"
+    match_headers: ["Authorization"]   # gh: "token …"; git: Basic auth, decoded by iron-proxy
+    hosts: ["github.com", "api.github.com"]
+    pattern: "^(github_pat_[A-Za-z0-9_]{40,}|gh[pousr]_[A-Za-z0-9]{36,})$"
+
+__devbox_secrets_dir: /etc/iron-proxy/secrets
+__devbox_ca_dir: /etc/iron-proxy/ca
+__devbox_ca_public_path: /usr/local/share/iron-proxy/ca.crt
+__devbox_ca_bundle_path: /usr/local/share/iron-proxy/agent-ca-bundle.pem
+__devbox_agent_env_path: /usr/local/share/iron-proxy/agent-env
+__devbox_config_dir: /etc/agent-devbox
+__devbox_cache_dir: /var/cache/agent-devbox
+
+# NFLOG group fed by the egress policy for agent-capture (tcpdump -i nflog:<group>).
+__devbox_capture_group: 64
+
+# Packet mark bit set on the agent's packets (loopback policy). Change it if
+# another tool uses this bit (Tailscale and Docker use 0x00ff0000).
+__devbox_agent_mark: "0x01000000"

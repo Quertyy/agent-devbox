@@ -1,0 +1,9 @@
+# Managed by agent-devbox (monitoring role).
+apiVersion: 1
+providers:
+  - name: agent-devbox
+    folder: agent-devbox
+    type: file
+    allowUiUpdates: false
+    options:
+      path: {{ __devbox_config_dir }}/monitoring/grafana/dashboards

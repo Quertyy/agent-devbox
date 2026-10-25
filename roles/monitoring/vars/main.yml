@@ -1,0 +1,52 @@
+# One systemd unit per component (devbox-<name>.service), rendered by
+# templates/unit.service.j2. Every unit runs as a DynamicUser with a private
+# state directory and the same hardening.
+monitoring_units:
+  prometheus:
+    description: Prometheus (agent-devbox)
+    exec: >-
+      /opt/agent-devbox/prometheus/prometheus
+      --config.file={{ __devbox_config_dir }}/monitoring/prometheus.yml
+      --storage.tsdb.path=/var/lib/devbox-prometheus
+      --storage.tsdb.retention.time={{ devbox_monitoring_retention }}
+      --web.listen-address=127.0.0.1:{{ monitoring_ports.prometheus }}
+    state: devbox-prometheus
+  node_exporter:
+    description: node_exporter (agent-devbox)
+    exec: >-
+      /opt/agent-devbox/node_exporter/node_exporter
+      --web.listen-address=127.0.0.1:{{ monitoring_ports.node_exporter }}
+      --collector.textfile.directory=/var/lib/agent-devbox/textfile
+    # Network statistics use netlink. Unit states come from devbox-textfile
+    # (the systemd collector needs D-Bus, which refuses dynamic users).
+    families: AF_UNIX AF_INET AF_INET6 AF_NETLINK
+  loki:
+    description: Loki (agent-devbox)
+    exec: /opt/agent-devbox/loki/loki-linux-{{ __devbox_arch }} -config.file={{ __devbox_config_dir }}/monitoring/loki.yml
+    state: devbox-loki
+  alloy:
+    description: Grafana Alloy log collector (agent-devbox)
+    exec: >-
+      /opt/agent-devbox/alloy/alloy-linux-{{ __devbox_arch }} run
+      --server.http.listen-addr=127.0.0.1:{{ monitoring_ports.alloy }}
+      --storage.path=/var/lib/devbox-alloy
+      --disable-reporting
+      {{ __devbox_config_dir }}/monitoring/alloy.alloy
+    state: devbox-alloy
+    extra: |
+      SupplementaryGroups=systemd-journal
+  grafana:
+    description: Grafana (agent-devbox)
+    exec: >-
+      /opt/agent-devbox/grafana/bin/grafana server
+      --homepath=/opt/agent-devbox/grafana
+      --config={{ __devbox_config_dir }}/monitoring/grafana/grafana.ini
+    state: devbox-grafana
+    # Read by systemd as root before starting; Grafana only applies it when
+    # it creates its database (first start).
+    extra: |
+      EnvironmentFile={{ __devbox_config_dir }}/grafana.env
+  obs_gateway:
+    description: Read-only Prometheus/Loki query gateway for the agent (agent-devbox)
+    exec: /usr/local/sbin/devbox-obs-gateway
+    after: devbox-loki.service devbox-prometheus.service

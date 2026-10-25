@@ -1,0 +1,65 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        ansible: ["2.20", "2.21"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install "ansible-core~=${{ matrix.ansible }}.0" ansible-lint pytest pyyaml
+      # One -r per call: ansible-galaxy only reads the last one.
+      - run: ansible-galaxy collection install -r requirements.yml
+      - run: ansible-galaxy collection install -r tests/requirements.yml
+      - run: ansible-playbook -i tests/inventory.yml --syntax-check site.yml verify.yml uninstall.yml
+      - run: ansible-lint
+      - run: python -m pytest -q tests/unit
+      - run: python tools/gen-config-doc.py --check
+      - run: shellcheck tests/run.sh verify/agent-checks.sh roles/iron_proxy/files/iron-proxy-reload
+
+  integration:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [debian, ubuntu, rocky]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install 'ansible-core~=2.21.0'
+      # One -r per call: ansible-galaxy only reads the last one.
+      - run: ansible-galaxy collection install -r requirements.yml
+      - run: ansible-galaxy collection install -r tests/requirements.yml
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/agent-devbox-test
+          key: releases-${{ hashFiles('roles/*/defaults/main.yml') }}
+      # Runners have no systemd user session for rootless podman: run the
+      # suite as root. The checkout is world-readable but not writable.
+      # The runner VM is throwaway: privileged test containers are fine here
+      # (Ubuntu's default AppArmor profile for podman stops systemd).
+      # The runner's AppArmor profile for unix_chkpwd attaches by path, also to
+      # the binary inside the test containers, and stops it reading
+      # /etc/shadow (sudo then fails on Rocky). Real servers do not have it.
+      - name: Unload the runner's unix_chkpwd AppArmor profile
+        run: sudo apparmor_parser -R /etc/apparmor.d/unix-chkpwd || true
+      - name: Integration suite
+        env:
+          TEST_PODMAN_OPTS: --privileged
+        run: >-
+          sudo -E env "PATH=$PATH" "HOME=$HOME" ANSIBLE_COLLECTIONS_PATH="$HOME/.ansible/collections"
+          tests/run.sh ${{ matrix.distro }}

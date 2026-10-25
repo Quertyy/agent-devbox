@@ -1,0 +1,190 @@
+# Allowlist presets, selected with devbox_allow_presets (docs/configuration.md
+# lists them). Rules use iron-proxy's allowlist syntax: host or cidr, optional
+# methods and paths. Package registries are read-only; telemetry endpoints
+# are deliberately absent.
+iron_proxy_presets:
+  anthropic:
+    - { host: "api.anthropic.com" }
+    - { host: "claude.ai", methods: [GET, HEAD], paths: ["/install.sh"] }
+    - { host: "downloads.claude.ai", methods: [GET, HEAD] }
+  openai_codex:
+    - { host: "chatgpt.com" }
+    - { host: "auth.openai.com" }
+  t3_code:
+    - { host: "*.t3coderelay.com" }
+    - { host: "relay.t3.codes" }
+  # Hermes Agent (Nous Research): installer and updates, Nous Portal login
+  # and inference. Its installer also needs github_read, pypi and node.
+  hermes:
+    - { host: "hermes-agent.nousresearch.com", methods: [GET, HEAD] }
+    - { host: "hermes-assets.nousresearch.com", methods: [GET, HEAD] }
+    - { host: "releases.astral.sh", methods: [GET, HEAD] }      # uv, used by the installer
+    - { host: "portal.nousresearch.com" }
+    - { host: "inference-api.nousresearch.com" }
+  # LLM APIs used with API keys (Hermes, aider, your own code...): pair them
+  # with a devbox_secrets entry so the key stays in iron-proxy.
+  openrouter:
+    - { host: "openrouter.ai" }
+  openai_api:
+    - { host: "api.openai.com" }
+  gemini:
+    - { host: "generativelanguage.googleapis.com" }
+  groq:
+    - { host: "api.groq.com" }
+  mistral:
+    - { host: "api.mistral.ai" }
+  # Messaging platforms for agent gateways (Hermes, bots).
+  telegram:
+    - { host: "api.telegram.org" }
+  slack:
+    - { host: "slack.com" }
+    - { host: "*.slack.com" }
+    - { host: "*.slack-edge.com", methods: [GET, HEAD] }
+  discord:
+    - { host: "discord.com" }
+    - { host: "gateway.discord.gg" }
+    - { host: "*.discord.gg" }
+    - { host: "cdn.discordapp.com", methods: [GET, HEAD] }
+    - { host: "media.discordapp.net", methods: [GET, HEAD] }
+  github_read:
+    - { host: "github.com", methods: [GET, HEAD] }
+    - { host: "github.com", methods: [POST], paths: ["/*/*/git-upload-pack"] }
+    - { host: "api.github.com", methods: [GET, HEAD] }
+    # gh uses GraphQL for most commands; bounded by the token's permissions.
+    - { host: "api.github.com", methods: [POST], paths: ["/graphql"] }
+    - { host: "codeload.github.com", methods: [GET, HEAD] }
+    - { host: "objects.githubusercontent.com", methods: [GET, HEAD] }
+    - { host: "raw.githubusercontent.com", methods: [GET, HEAD] }
+    - { host: "release-assets.githubusercontent.com", methods: [GET, HEAD] }
+  npm:
+    - { host: "registry.npmjs.org", methods: [GET, HEAD] }
+    # `npm install` posts the dependency list to the advisory endpoint.
+    - { host: "registry.npmjs.org", methods: [POST], paths: ["/-/npm/v1/security/*"] }
+  node:
+    - { host: "nodejs.org", methods: [GET, HEAD] }
+    - { host: "bun.sh", methods: [GET, HEAD] }
+  pypi:
+    - { host: "pypi.org", methods: [GET, HEAD] }
+    - { host: "files.pythonhosted.org", methods: [GET, HEAD] }
+  crates:
+    - { host: "crates.io", methods: [GET, HEAD] }
+    - { host: "index.crates.io", methods: [GET, HEAD] }
+    - { host: "static.crates.io", methods: [GET, HEAD] }
+    - { host: "static.rust-lang.org", methods: [GET, HEAD] }
+    - { host: "sh.rustup.rs", methods: [GET, HEAD] }
+  golang:
+    - { host: "proxy.golang.org", methods: [GET, HEAD] }
+    - { host: "sum.golang.org", methods: [GET, HEAD] }
+    - { host: "go.dev", methods: [GET, HEAD] }
+    - { host: "dl.google.com", methods: [GET, HEAD], paths: ["/go/*"] }
+  maven:
+    - { host: "repo.maven.apache.org", methods: [GET, HEAD] }
+    - { host: "repo1.maven.org", methods: [GET, HEAD] }
+    - { host: "maven.google.com", methods: [GET, HEAD] }
+    - { host: "dl.google.com", methods: [GET, HEAD], paths: ["/android/*", "/dl/android/*"] }
+  gradle:
+    - { host: "services.gradle.org", methods: [GET, HEAD] }
+    - { host: "downloads.gradle.org", methods: [GET, HEAD] }
+    - { host: "plugins.gradle.org", methods: [GET, HEAD] }
+    - { host: "plugins-artifacts.gradle.org", methods: [GET, HEAD] }
+  rubygems:
+    - { host: "rubygems.org", methods: [GET, HEAD] }
+    - { host: "index.rubygems.org", methods: [GET, HEAD] }
+  packagist:
+    - { host: "repo.packagist.org", methods: [GET, HEAD] }
+    - { host: "packagist.org", methods: [GET, HEAD] }
+  nuget:
+    - { host: "api.nuget.org", methods: [GET, HEAD] }
+    - { host: "globalcdn.nuget.org", methods: [GET, HEAD] }
+  conda:
+    - { host: "conda.anaconda.org", methods: [GET, HEAD] }
+    - { host: "repo.anaconda.com", methods: [GET, HEAD] }
+  huggingface:
+    - { host: "huggingface.co", methods: [GET, HEAD] }
+    - { host: "*.huggingface.co", methods: [GET, HEAD] }
+    - { host: "*.hf.co", methods: [GET, HEAD] }
+  # VS Code / Cursor remote server and extensions, for an IDE connected as the
+  # agent (see SECURITY.md: open the workspace as the agent, not as the admin).
+  vscode:
+    - { host: "update.code.visualstudio.com", methods: [GET, HEAD] }
+    - { host: "vscode.download.prss.microsoft.com", methods: [GET, HEAD] }
+    - { host: "*.vo.msecnd.net", methods: [GET, HEAD] }
+    - { host: "marketplace.visualstudio.com" }
+    - { host: "*.gallery.vsassets.io", methods: [GET, HEAD] }
+    - { host: "*.gallerycdn.vsassets.io", methods: [GET, HEAD] }
+    - { host: "open-vsx.org", methods: [GET, HEAD] }
+    - { host: "main.vscode-cdn.net", methods: [GET, HEAD] }
+    # GitHub Copilot (listed one by one: *.githubcopilot.com would also let
+    # its telemetry and experiment endpoints through).
+    - { host: "api.githubcopilot.com" }
+    - { host: "api.individual.githubcopilot.com" }
+    - { host: "proxy.individual.githubcopilot.com" }
+    - { host: "api.business.githubcopilot.com" }
+    - { host: "proxy.business.githubcopilot.com" }
+    - { host: "api.enterprise.githubcopilot.com" }
+    - { host: "proxy.enterprise.githubcopilot.com" }
+  # Documentation sites agents read while coding (read-only). Agents' web
+  # *search* runs at the LLM provider and needs nothing here; *fetching* a
+  # page goes through the proxy. Multi-tenant hosts (GitBook, Read the Docs,
+  # GitHub Pages) let page owners see visit analytics: GET requests to them
+  # are a low-bandwidth way out. Add your own doc sites with
+  # devbox_allow_rules_extra.
+  docs:
+    - { host: "developer.mozilla.org", methods: [GET, HEAD] }
+    - { host: "docs.python.org", methods: [GET, HEAD] }
+    - { host: "peps.python.org", methods: [GET, HEAD] }
+    - { host: "docs.rs", methods: [GET, HEAD] }
+    - { host: "doc.rust-lang.org", methods: [GET, HEAD] }
+    - { host: "pkg.go.dev", methods: [GET, HEAD] }
+    - { host: "docs.npmjs.com", methods: [GET, HEAD] }
+    - { host: "www.typescriptlang.org", methods: [GET, HEAD] }
+    - { host: "docs.github.com", methods: [GET, HEAD] }
+    - { host: "docs.docker.com", methods: [GET, HEAD] }
+    - { host: "kubernetes.io", methods: [GET, HEAD] }
+    - { host: "learn.microsoft.com", methods: [GET, HEAD] }
+    - { host: "docs.aws.amazon.com", methods: [GET, HEAD] }
+    - { host: "cloud.google.com", methods: [GET, HEAD], paths: ["/docs/*"] }
+    - { host: "docs.anthropic.com", methods: [GET, HEAD] }
+    - { host: "docs.claude.com", methods: [GET, HEAD] }
+    - { host: "platform.openai.com", methods: [GET, HEAD], paths: ["/docs/*"] }
+    - { host: "man7.org", methods: [GET, HEAD] }
+    - { host: "manpages.debian.org", methods: [GET, HEAD] }
+    - { host: "stackoverflow.com", methods: [GET, HEAD] }
+    - { host: "*.stackexchange.com", methods: [GET, HEAD] }
+    - { host: "superuser.com", methods: [GET, HEAD] }
+    - { host: "serverfault.com", methods: [GET, HEAD] }
+    - { host: "askubuntu.com", methods: [GET, HEAD] }
+    - { host: "*.wikipedia.org", methods: [GET, HEAD] }
+    - { host: "*.readthedocs.io", methods: [GET, HEAD] }
+    - { host: "*.readthedocs-hosted.com", methods: [GET, HEAD] }
+    - { host: "*.gitbook.io", methods: [GET, HEAD] }
+    - { host: "*.github.io", methods: [GET, HEAD] }
+  # Ansible Galaxy collections (ansible-galaxy collection install).
+  ansible_galaxy:
+    - { host: "galaxy.ansible.com", methods: [GET, HEAD] }
+    - { host: "ansible-galaxy-ng.s3.dualstack.us-east-1.amazonaws.com", methods: [GET, HEAD] }
+  container_registries:
+    - { host: "registry-1.docker.io", methods: [GET, HEAD] }
+    - { host: "auth.docker.io", methods: [GET, HEAD] }
+    - { host: "production.cloudflare.docker.com", methods: [GET, HEAD] }
+    - { host: "ghcr.io", methods: [GET, HEAD] }
+    - { host: "pkg-containers.githubusercontent.com", methods: [GET, HEAD] }
+    - { host: "quay.io", methods: [GET, HEAD] }
+    - { host: "*.quay.io", methods: [GET, HEAD] }
+
+# Never dialed, even for an allowlisted host (SSRF / DNS rebinding). The host's
+# own networks are appended at render time; devbox_upstream_allow_cidrs carves
+# exceptions (never inside loopback, link-local or metadata ranges).
+iron_proxy_deny_cidrs_base:
+  - "0.0.0.0/8"
+  - "10.0.0.0/8"
+  - "100.64.0.0/10"
+  - "127.0.0.0/8"
+  - "169.254.0.0/16"
+  - "172.16.0.0/12"
+  - "192.168.0.0/16"
+  - "224.0.0.0/4"
+  - "::1/128"
+  - "fc00::/7"
+  - "fe80::/10"
+  - "ff00::/8"

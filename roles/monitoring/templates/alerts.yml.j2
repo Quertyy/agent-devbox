@@ -1,0 +1,45 @@
+# Managed by agent-devbox (monitoring role). Visible in Grafana > Alerting and
+# in Prometheus; no notification channel is configured by default.
+groups:
+  - name: agent-devbox
+    rules:
+      - alert: DevboxServiceDown
+        expr: devbox_unit_active == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ '{{' }} $labels.unit {{ '}}' }} is not active"
+      - alert: DevboxEgressPolicyMissing
+        expr: devbox_egress_policy_loaded == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "The nftables table inet agent_egress is not loaded (flushed by nftables.service?): the agent is not confined. sudo systemctl restart agent-egress-firewall"
+      - alert: DevboxSecretMissing
+        expr: devbox_secret_present == 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Secret {{ '{{' }} $labels.name {{ '}}' }} is declared but not stored (sudo iron-proxy-set-secret {{ '{{' }} $labels.name {{ '}}' }})"
+      - alert: DevboxClaudeTokenAging
+        expr: time() - devbox_secret_mtime_seconds{name="claude_oauth"} > 330 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "The Claude subscription token is over 330 days old: run claude setup-token and store the new one"
+      - alert: DevboxCAExpiring
+        expr: devbox_ca_expiry_timestamp_seconds - time() < 30 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "The iron-proxy CA expires in less than 30 days"
+      - alert: DevboxStillObserving
+        expr: devbox_mode{mode="observe"} == 1
+        for: 14d
+        labels: { severity: info }
+        annotations:
+          summary: "The egress policy has been in observe mode for 14 days: review the audit and switch to enforce"
+      - alert: DevboxDiskAlmostFull
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes < 0.1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ '{{' }} $labels.mountpoint {{ '}}' }} has less than 10% free space"

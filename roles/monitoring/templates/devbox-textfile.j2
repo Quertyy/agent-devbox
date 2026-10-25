@@ -1,0 +1,42 @@
+#!/bin/bash
+# Managed by agent-devbox (monitoring role).
+# Writes agent-devbox state for node_exporter's textfile collector: CA expiry,
+# which declared secrets are stored (and when), current mode. Never reads
+# secret contents, only their metadata.
+set -euo pipefail
+out=/var/lib/agent-devbox/textfile/devbox.prom
+tmp=$(mktemp "$out.XXXXXX")
+{
+  echo "# HELP devbox_ca_expiry_timestamp_seconds Expiry of the iron-proxy MITM CA."
+  echo "# TYPE devbox_ca_expiry_timestamp_seconds gauge"
+  end=$(openssl x509 -in {{ __devbox_ca_public_path }} -noout -enddate | cut -d= -f2)
+  echo "devbox_ca_expiry_timestamp_seconds $(date -d "$end" +%s)"
+  echo "# HELP devbox_secret_present Whether a declared iron-proxy secret is stored."
+  echo "# TYPE devbox_secret_present gauge"
+  echo "# HELP devbox_secret_mtime_seconds When a stored secret was last written."
+  echo "# TYPE devbox_secret_mtime_seconds gauge"
+  for name in {{ __devbox_secrets | map(attribute='name') | join(' ') }}; do
+    f={{ __devbox_secrets_dir }}/$name
+    if [[ -s $f ]]; then
+      echo "devbox_secret_present{name=\"$name\"} 1"
+      echo "devbox_secret_mtime_seconds{name=\"$name\"} $(stat -c %Y "$f")"
+    else
+      echo "devbox_secret_present{name=\"$name\"} 0"
+    fi
+  done
+  echo "# HELP devbox_egress_policy_loaded Whether the nftables table inet agent_egress is loaded."
+  echo "# TYPE devbox_egress_policy_loaded gauge"
+  if nft list table inet agent_egress >/dev/null 2>&1; then loaded=1; else loaded=0; fi
+  echo "devbox_egress_policy_loaded $loaded"
+  echo "# HELP devbox_unit_active Whether an agent-devbox systemd unit is active."
+  echo "# TYPE devbox_unit_active gauge"
+  for unit in iron-proxy.service agent-egress-firewall.service {{ monitoring_units.keys() | map('replace', '_', '-') | map('regex_replace', '^(.*)$', 'devbox-\\1.service') | join(' ') }}; do
+    if systemctl is-active --quiet "$unit"; then active=1; else active=0; fi
+    echo "devbox_unit_active{unit=\"$unit\"} $active"
+  done
+  echo "# HELP devbox_mode Current egress policy mode."
+  echo "# TYPE devbox_mode gauge"
+  echo "devbox_mode{mode=\"{{ devbox_mode }}\"} 1"
+} > "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" "$out"

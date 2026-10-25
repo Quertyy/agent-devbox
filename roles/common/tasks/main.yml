@@ -1,0 +1,149 @@
+# Platform checks, distribution settings, base packages, sshd hardening and
+# the facts every other role relies on (they all depend on this role).
+
+- name: Check the platform is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+      - devbox_agent_user != devbox_admin_user
+    fail_msg: >-
+      Supported: Debian/Ubuntu and RHEL-family (incl. Fedora) with systemd on
+      x86_64/aarch64, and devbox_agent_user must differ from devbox_admin_user.
+      To add a distribution, see docs/adding-a-distro.md.
+    quiet: true
+
+- name: Warn about unknown devbox_* settings (typos are otherwise ignored)
+  ansible.builtin.debug:
+    msg: "Unknown setting(s), check the spelling: {{ __common_unknown | join(', ') }}"
+  vars:
+    __common_known: "{{ (lookup('ansible.builtin.file', role_path ~ '/meta/argument_specs.yml') | from_yaml).argument_specs.main.options.keys() | list }}"
+    __common_unknown: "{{ query('ansible.builtin.varnames', '^devbox_') | difference(__common_known) }}"
+  when: __common_unknown | length > 0
+
+- name: Load distribution settings
+  ansible.builtin.include_vars: "{{ lookup('ansible.builtin.first_found', __common_candidates) }}"
+  vars:
+    __common_candidates:
+      files:
+        - "{{ ansible_facts['distribution'] }}-{{ ansible_facts['distribution_major_version'] }}.yml"
+        - "{{ ansible_facts['distribution'] }}.yml"
+        - "{{ ansible_facts['os_family'] }}.yml"
+      paths: ["{{ role_path }}/vars"]
+
+- name: Check the distribution settings are complete
+  ansible.builtin.assert:
+    that:
+      - __devbox_pkg_backend in ['apt', 'dnf']
+      - __devbox_base_packages | length > 0
+      - __devbox_system_ca_bundle | length > 0
+      - __devbox_ssh_service | length > 0
+    fail_msg: "Incomplete distribution settings in roles/common/vars: see docs/adding-a-distro.md."
+    quiet: true
+
+- name: Check cgroup v2 (the loopback policy matches cgroups)
+  ansible.builtin.stat:
+    path: /sys/fs/cgroup/cgroup.controllers
+  register: __common_cgroup2
+
+- name: Fail without cgroup v2
+  ansible.builtin.assert:
+    that: __common_cgroup2.stat.exists
+    fail_msg: "cgroup v2 (unified hierarchy) is required."
+    quiet: true
+
+- name: Remember the release architecture
+  ansible.builtin.set_fact:
+    __devbox_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+
+- name: Resolve the secrets iron-proxy swaps
+  ansible.builtin.set_fact:
+    __devbox_secrets: "{{ devbox_builtin_secrets | devbox_named_items(__devbox_builtin_secret_defs) + devbox_secrets }}"
+
+- name: Install base packages
+  ansible.builtin.package:
+    name: "{{ __devbox_base_packages }}"
+    state: present
+
+- name: Read local accounts
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Check the admin account exists
+  ansible.builtin.assert:
+    that: devbox_admin_user in ansible_facts['getent_passwd']
+    fail_msg: "devbox_admin_user '{{ devbox_admin_user }}' does not exist on this host."
+    quiet: true
+
+- name: Read the admin home permissions
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['getent_passwd'][devbox_admin_user][4] }}"
+  register: __common_admin_home
+
+- name: Warn if other users can read the admin home
+  ansible.builtin.debug:
+    msg: >-
+      {{ __common_admin_home.stat.path }} is mode {{ __common_admin_home.stat.mode }}:
+      the agent can read whatever is world-readable inside. Consider
+      chmod 0750 (or 0700) on it.
+  when: __common_admin_home.stat.roth or __common_admin_home.stat.xoth
+
+- name: Check sshd supports drop-in files
+  ansible.builtin.stat:
+    path: /etc/ssh/sshd_config.d
+  register: __common_sshd_dropins
+
+- name: Fail without sshd_config.d
+  ansible.builtin.assert:
+    that: __common_sshd_dropins.stat.isdir | default(false)
+    fail_msg: >-
+      /etc/ssh/sshd_config.d is missing: install openssh-server (OpenSSH >= 8.2,
+      with "Include /etc/ssh/sshd_config.d/*.conf" in sshd_config).
+    quiet: true
+
+# sshd -t needs it; socket-activated setups (Ubuntu 24.04) only create it on
+# the first connection.
+- name: Ensure the sshd privilege separation directory exists
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    mode: "0755"
+
+- name: Read services (for handlers)
+  ansible.builtin.service_facts:
+
+- name: Check the admin can log in with a key before disabling passwords
+  ansible.builtin.stat:
+    path: "{{ ansible_facts['getent_passwd'][devbox_admin_user][4] }}/.ssh/authorized_keys"
+  register: __common_admin_keys
+  when: devbox_harden_sshd | bool
+
+- name: Refuse to lock the admin out
+  ansible.builtin.assert:
+    that: __common_admin_keys.stat.exists and __common_admin_keys.stat.size > 0
+    fail_msg: >-
+      {{ devbox_admin_user }} has no ~/.ssh/authorized_keys: refusing to disable
+      SSH password login. Add a key or set devbox_harden_sshd: false.
+    quiet: true
+  when: devbox_harden_sshd | bool
+
+- name: Harden sshd (keys only, no root login)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-devbox-hardening.conf
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+    content: |
+      # Managed by agent-devbox (common role).
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  when: devbox_harden_sshd | bool
+  notify: Reload sshd
+
+- name: Remove the sshd hardening when disabled
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/10-devbox-hardening.conf
+    state: absent
+  when: not devbox_harden_sshd | bool
+  notify: Reload sshd

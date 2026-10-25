@@ -1,0 +1,82 @@
+# Root helpers the agent may run through sudo. Each one validates its own
+# arguments; the sudoers rule allows nothing else.
+
+- name: Package helper state (apt)
+  when: devbox_agent_pkg_install | bool and __devbox_pkg_backend == 'apt'
+  block:
+    - name: Create the helper's private apt directories
+      ansible.builtin.file:
+        path: /var/lib/agent-pkg/sources.d
+        state: directory
+        mode: "0755"
+
+    - name: Write the official sources used by the helper
+      ansible.builtin.template:
+        src: agent-pkg.sources.j2
+        dest: /var/lib/agent-pkg/sources.d/official.sources
+        mode: "0644"
+
+    - name: Remove links left by earlier versions
+      ansible.builtin.find:
+        paths: /var/lib/agent-pkg/sources.d
+        file_type: link
+      register: __agent_helpers_old_links
+
+    - name: Drop old source links
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ __agent_helpers_old_links.files }}"
+      loop_control: { label: "{{ item.path }}" }
+
+- name: Install agent-pkg-install
+  ansible.builtin.template:
+    src: agent-pkg-install.j2
+    dest: /usr/local/sbin/agent-pkg-install
+    mode: "0755"
+  when: devbox_agent_pkg_install | bool
+
+- name: Remove agent-pkg-install when disabled
+  ansible.builtin.file:
+    path: /usr/local/sbin/agent-pkg-install
+    state: absent
+  when: not devbox_agent_pkg_install | bool
+
+- name: Create the capture directory
+  ansible.builtin.file:
+    path: /var/lib/agent-captures
+    state: directory
+    owner: "{{ devbox_agent_user }}"
+    group: "{{ devbox_agent_user }}"
+    mode: "0750"
+  when: devbox_agent_capture_ports | length > 0
+
+- name: Install agent-capture
+  ansible.builtin.template:
+    src: agent-capture.j2
+    dest: /usr/local/sbin/agent-capture
+    mode: "0755"
+  when: devbox_agent_capture_ports | length > 0
+
+- name: Remove agent-capture when disabled
+  ansible.builtin.file:
+    path: /usr/local/sbin/agent-capture
+    state: absent
+  when: devbox_agent_capture_ports | length == 0
+
+- name: Allow the agent to run exactly these helpers
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/agent-devbox
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+    content: |
+      # Managed by agent-devbox. Each helper validates its own arguments; the
+      # agent has no other sudo access.
+      {{ devbox_agent_user }} ALL=(root) NOPASSWD: {{ __agent_helpers_list | join(', ') }}
+  when: __agent_helpers_list | length > 0
+
+- name: Remove the sudoers rule when no helper is enabled
+  ansible.builtin.file:
+    path: /etc/sudoers.d/agent-devbox
+    state: absent
+  when: __agent_helpers_list | length == 0

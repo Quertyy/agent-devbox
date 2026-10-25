@@ -1,0 +1,186 @@
+# Environment of the agent zone: proxy, CA trust, placeholder tokens, git over
+# HTTPS, and the agent CLIs. Root only writes outside the agent home; inside
+# it, every task runs as the agent (root must never follow agent-controlled
+# paths).
+
+- name: Check extra environment variables
+  ansible.builtin.assert:
+    that:
+      - item.key is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - item.value is devbox_safe_env_value
+    fail_msg: >-
+      devbox_agent_env_extra: {{ item.key }} must be a plain name and its value
+      may only contain letters, digits and ._:/@%+=,- (it is written unquoted
+      to sshd, systemd and shell files).
+    quiet: true
+  loop: "{{ devbox_agent_env_extra | dict2items }}"
+  loop_control: { label: "{{ item.key }}" }
+
+- name: Check the presets the CLI installers need
+  ansible.builtin.assert:
+    that: devbox_mode == 'observe' or __agent_env_missing_presets | length == 0
+    fail_msg: >-
+      devbox_agent_clis needs these presets in enforce mode: {{ __agent_env_missing_presets | join(', ') }}
+      (claude: anthropic; codex: github_read; hermes: hermes, github_read, pypi, node).
+    quiet: true
+  vars:
+    __agent_env_needed:
+      claude: [anthropic]
+      codex: [github_read]
+      hermes: [hermes, github_read, pypi, node]
+    __agent_env_missing_presets: >-
+      {{ devbox_agent_clis | map('extract', __agent_env_needed) | flatten | unique | difference(devbox_allow_presets) }}
+
+- name: Build the agent environment (single source for sshd, systemd and shells)
+  ansible.builtin.set_fact:
+    __agent_env: >-
+      {{ {
+           'HTTPS_PROXY': 'http://127.0.0.1:' ~ devbox_proxy_tunnel_port,
+           'HTTP_PROXY': 'http://127.0.0.1:' ~ devbox_proxy_tunnel_port,
+           'https_proxy': 'http://127.0.0.1:' ~ devbox_proxy_tunnel_port,
+           'http_proxy': 'http://127.0.0.1:' ~ devbox_proxy_tunnel_port,
+           'NO_PROXY': 'localhost,127.0.0.1,::1',
+           'no_proxy': 'localhost,127.0.0.1,::1',
+           'NODE_USE_ENV_PROXY': '1',
+           'SSL_CERT_FILE': __devbox_ca_bundle_path,
+           'NODE_EXTRA_CA_CERTS': __devbox_ca_public_path,
+           'REQUESTS_CA_BUNDLE': __devbox_ca_bundle_path,
+           'CURL_CA_BUNDLE': __devbox_ca_bundle_path,
+           'GIT_SSL_CAINFO': __devbox_ca_bundle_path,
+           'CARGO_HTTP_CAINFO': __devbox_ca_bundle_path,
+           'PIP_CERT': __devbox_ca_bundle_path,
+           'AWS_CA_BUNDLE': __devbox_ca_bundle_path,
+           'DENO_CERT': __devbox_ca_bundle_path,
+           'CODEX_CA_CERTIFICATE': __devbox_ca_bundle_path,
+           'DISABLE_TELEMETRY': '1',
+           'DISABLE_ERROR_REPORTING': '1',
+         }
+         | combine({'CLAUDE_CODE_OAUTH_TOKEN': __devbox_fake_claude_token} if 'claude_oauth' in devbox_builtin_secrets else {})
+         | combine({'GH_TOKEN': __devbox_fake_github_token, 'GITHUB_TOKEN': __devbox_fake_github_token} if 'github_pat' in devbox_builtin_secrets else {})
+         | combine(devbox_agent_env_extra) }}
+
+- name: Install the CA bundle builder
+  ansible.builtin.template:
+    src: iron-proxy-agent-bundle.j2
+    dest: /usr/local/sbin/iron-proxy-agent-bundle
+    mode: "0755"
+
+- name: Install the CA bundle units (rebuilt when the system bundle changes)
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop: [iron-proxy-agent-bundle.service, iron-proxy-agent-bundle.path]
+
+- name: Build the CA bundle
+  ansible.builtin.command: /usr/local/sbin/iron-proxy-agent-bundle
+  register: __agent_env_bundle
+  changed_when: "'updated' in __agent_env_bundle.stdout"
+
+- name: Watch the system bundle
+  ansible.builtin.systemd_service:
+    name: iron-proxy-agent-bundle.path
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Write the agent environment file
+  ansible.builtin.template:
+    src: agent-env.j2
+    dest: "{{ __devbox_agent_env_path }}"
+    mode: "0644"
+  notify: Reload the agent's user manager
+
+- name: Configure SSH sessions of the agent (environment, no forwarding)
+  ansible.builtin.template:
+    src: sshd-agent.conf.j2
+    dest: /etc/ssh/sshd_config.d/90-agent-devbox.conf
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload sshd
+
+- name: Write the shared git configuration for the agent
+  ansible.builtin.template:
+    src: agent-gitconfig.j2
+    dest: /usr/local/share/iron-proxy/agent-gitconfig
+    mode: "0644"
+
+- name: Install the system libraries the agent CLIs need
+  ansible.builtin.package:
+    name: "{{ devbox_agent_clis | select('in', __devbox_cli_packages | default({})) | map('extract', __devbox_cli_packages) | flatten | unique }}"
+    state: present
+  when: devbox_agent_clis | select('in', __devbox_cli_packages | default({})) | map('extract', __devbox_cli_packages) | flatten | length > 0
+
+- name: Agent home setup (as the agent)
+  become: true
+  become_user: "{{ devbox_agent_user }}"
+  block:
+    - name: Create the agent's config directories
+      ansible.builtin.file:
+        path: "{{ __devbox_agent_home }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [.config, .config/environment.d, .local, .local/bin]
+
+    - name: Pass the environment to the agent's systemd user services
+      ansible.builtin.file:
+        src: "{{ __devbox_agent_env_path }}"
+        dest: "{{ __devbox_agent_home }}/.config/environment.d/10-agent-devbox.conf"
+        state: link
+        force: true
+      notify: Reload the agent's user manager
+
+    - name: Pass the environment to the agent's login shells
+      ansible.builtin.blockinfile:
+        path: "{{ __devbox_agent_home }}/.profile"
+        create: true
+        mode: "0644"
+        marker: "# {mark} agent-devbox"
+        block: |
+          set -a; . {{ __devbox_agent_env_path }}; set +a
+          umask 002
+          case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH" ;; esac
+
+    - name: Include the shared git configuration
+      community.general.git_config:
+        scope: file
+        file: "{{ __devbox_agent_home }}/.gitconfig"
+        name: include.path
+        value: /usr/local/share/iron-proxy/agent-gitconfig
+
+    # The CLIs update themselves; these tasks only install them once. They
+    # are not pinned (official installer / latest release) and run as the
+    # agent, through the proxy.
+    - name: Install Claude Code for the agent (official installer)
+      ansible.builtin.shell: set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash
+      args:
+        executable: /bin/bash
+        creates: "{{ __devbox_agent_home }}/.local/bin/claude"
+      environment: "{{ __agent_env | combine({'HOME': __devbox_agent_home}) }}"
+      when: "'claude' in devbox_agent_clis"
+
+    - name: Install Codex for the agent (latest GitHub release)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        arch={{ {'amd64': 'x86_64', 'arm64': 'aarch64'}[__devbox_arch] }}
+        tmp=$(mktemp -d)
+        trap 'rm -rf "$tmp"' EXIT
+        curl -fsSL "https://github.com/openai/codex/releases/latest/download/codex-$arch-unknown-linux-musl.tar.gz" | tar -xz -C "$tmp"
+        install -m 0755 "$tmp/codex-$arch-unknown-linux-musl" "$HOME/.local/bin/codex"
+      args:
+        executable: /bin/bash
+        creates: "{{ __devbox_agent_home }}/.local/bin/codex"
+      environment: "{{ __agent_env | combine({'HOME': __devbox_agent_home}) }}"
+      when: "'codex' in devbox_agent_clis"
+
+    - name: Install Hermes Agent for the agent (official installer)
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -fsSL https://hermes-agent.nousresearch.com/install.sh |
+          bash -s -- --non-interactive --skip-browser --skip-computer-use
+      args:
+        executable: /bin/bash
+        creates: "{{ __devbox_agent_home }}/.local/bin/hermes"
+      environment: "{{ __agent_env | combine({'HOME': __devbox_agent_home}) }}"
+      when: "'hermes' in devbox_agent_clis"

@@ -1,0 +1,48 @@
+# The playbook runs as root on the servers with code from this checkout
+# (tasks, templates, Python plugins, and git hooks when you pull): if another
+# user can modify it, that user can run code as root, or as you, at your next
+# run. Every file, .git included, must belong to you (or root) and must not be
+# writable by group or others. DEVBOX_ALLOW_UNSAFE_CHECKOUT=1 skips the check:
+# only for throwaway targets (tests/run.sh sets it).
+- name: Look for files in the checkout others could modify
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ playbook_dir }}"
+      - "("
+      - -perm
+      - /022
+      - -not
+      - -type
+      - l
+      - ")"
+      - -o
+      - "("
+      - -not
+      - -user
+      - "{{ lookup('ansible.builtin.pipe', 'id -u') }}"
+      - -not
+      - -user
+      - "0"
+      - ")"
+  register: __checkout_unsafe
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: lookup('ansible.builtin.env', 'DEVBOX_ALLOW_UNSAFE_CHECKOUT') != '1'
+
+- name: Refuse an unsafe checkout
+  ansible.builtin.assert:
+    that: __checkout_unsafe.stdout | length == 0
+    fail_msg: >-
+      {{ playbook_dir }} contains files owned by another user or writable by
+      group/others, e.g. {{ __checkout_unsafe.stdout_lines[:3] | join(', ') }}.
+      Run the playbook from a checkout only you can modify (a clone in your home
+      on your laptop, with umask 022; `chmod -R go-w` fixes permissions). See SECURITY.md.
+    quiet: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+  when: lookup('ansible.builtin.env', 'DEVBOX_ALLOW_UNSAFE_CHECKOUT') != '1'

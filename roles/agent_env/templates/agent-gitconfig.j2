@@ -1,0 +1,16 @@
+# Managed by agent-devbox (agent_env role), included from the agent's ~/.gitconfig.
+# HTTPS only, through iron-proxy. The credential is the placeholder GH_TOKEN;
+# iron-proxy swaps in the real token.
+[credential "https://github.com"]
+	helper =
+	helper = "!f() { test \"$1\" = get && echo username=x-access-token && echo password=$GH_TOKEN; }; f"
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
+{% for alias in devbox_git_ssh_aliases %}
+	insteadOf = git@{{ alias }}:
+{% endfor %}
+# The agent may use any repository it can read (the ownership check protects
+# the repository's owner, not the agent). Path globs need git >= 2.46.
+[safe]
+	directory = *

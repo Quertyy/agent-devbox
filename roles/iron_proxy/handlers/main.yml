@@ -1,0 +1,13 @@
+- name: Restart iron-proxy
+  ansible.builtin.systemd_service:
+    name: iron-proxy
+    state: restarted
+    daemon_reload: true
+
+# Allowlist and secret changes are applied without dropping connections. If
+# the new config is invalid, iron-proxy keeps the running pipeline and this
+# handler fails. (Startup settings trigger "Restart iron-proxy" instead.)
+- name: Reload iron-proxy
+  ansible.builtin.systemd_service:
+    name: iron-proxy
+    state: reloaded

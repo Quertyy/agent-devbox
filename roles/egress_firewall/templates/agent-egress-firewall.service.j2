@@ -1,0 +1,23 @@
+# Managed by agent-devbox (egress_firewall role).
+[Unit]
+Description=Egress policy for the agent zone (nftables table inet agent_egress)
+# Loaded before anything the agent runs at boot (lingering user services) and
+# before networking; the agent's slice must exist for the cgroup match.
+DefaultDependencies=no
+Wants=network-pre.target user-{{ __devbox_agent_uid }}.slice
+After=user-{{ __devbox_agent_uid }}.slice local-fs.target nftables.service firewalld.service
+Before=network-pre.target user@{{ __devbox_agent_uid }}.service iron-proxy.service shutdown.target
+Conflicts=shutdown.target
+# nftables.service and firewalld may flush the whole ruleset when they
+# (re)start: restart with them so the policy is re-applied.
+PartOf=nftables.service firewalld.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ __devbox_config_dir }}/agent-egress.nft
+ExecReload=/usr/sbin/nft -f {{ __devbox_config_dir }}/agent-egress.nft
+ExecStop=/usr/sbin/nft delete table inet agent_egress
+
+[Install]
+WantedBy=multi-user.target

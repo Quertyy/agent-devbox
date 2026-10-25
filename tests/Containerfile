@@ -1,0 +1,24 @@
+# Throwaway "server" for the test suite: systemd as PID 1 plus what Ansible
+# needs. EXTRA_CA lets the build trust a MITM proxy in front of the test host
+# (empty file otherwise).
+ARG BASE
+FROM ${BASE}
+COPY extra-ca.pem /tmp/extra-ca.pem
+RUN set -eux; \
+    if command -v apt-get >/dev/null; then \
+      export DEBIAN_FRONTEND=noninteractive; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends systemd systemd-sysv dbus python3 sudo ca-certificates iproute2 procps openssh-server; \
+      if [ -s /tmp/extra-ca.pem ]; then cp /tmp/extra-ca.pem /usr/local/share/ca-certificates/extra-ca.crt; update-ca-certificates; fi; \
+      rm -rf /var/lib/apt/lists/*; \
+    else \
+      if [ -s /tmp/extra-ca.pem ]; then cp /tmp/extra-ca.pem /etc/pki/ca-trust/source/anchors/extra-ca.pem; update-ca-trust; fi; \
+      dnf install -y systemd python3 sudo iproute procps-ng openssh-server; \
+      dnf clean all; \
+    fi; \
+    useradd -m -s /bin/bash admin; \
+    install -d -m 0700 -o admin -g admin /home/admin/.ssh; \
+    echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDevboxTestKeyDevboxTestKeyDevboxTestKey0 admin@test" > /home/admin/.ssh/authorized_keys; \
+    chown admin:admin /home/admin/.ssh/authorized_keys
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

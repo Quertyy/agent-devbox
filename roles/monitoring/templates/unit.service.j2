@@ -1,0 +1,43 @@
+# Managed by agent-devbox (monitoring role).
+[Unit]
+Description={{ item.value.description }}
+After=network-online.target {{ item.value.after | default('') }}
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+ExecStart={{ item.value.exec }}
+Restart=on-failure
+RestartSec=5s
+{% if item.value.state is defined %}
+StateDirectory={{ item.value.state }}
+WorkingDirectory=/var/lib/{{ item.value.state }}
+{% endif %}
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Refuse other system calls with an error instead of killing the service:
+# some collectors probe optional kernel interfaces.
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies={{ item.value.families | default('AF_UNIX AF_INET AF_INET6') }}
+{% if item.value.extra is defined %}
+{{ item.value.extra }}
+{%- endif %}
+
+[Install]
+WantedBy=multi-user.target

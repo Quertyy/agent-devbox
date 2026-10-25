@@ -1,0 +1,7 @@
+# Managed by agent-devbox (agent_env role).
+[Unit]
+Description=Rebuild the agent CA bundle (system roots + iron-proxy CA)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/iron-proxy-agent-bundle

@@ -1,0 +1,108 @@
+# Checks the confinement from the agent's point of view, on any converged
+# server. It changes nothing durable: a throwaway listener and a temporary
+# copy of the checks, both removed at the end.
+#   ansible-playbook verify.yml
+- name: Verify the agent devbox
+  hosts: devbox
+  become: true
+  gather_facts: true
+  check_mode: false   # read-only by design; nothing to simulate
+  tasks:
+    - name: Load shared settings (host configuration still wins)
+      ansible.builtin.import_role:
+        name: common
+        tasks_from: noop.yml
+
+    - name: Services are active  # noqa: command-instead-of-module (several units at once)
+      ansible.builtin.command: systemctl is-active iron-proxy agent-egress-firewall
+      changed_when: false
+
+    - name: The egress policy is loaded
+      ansible.builtin.command: nft list table inet agent_egress
+      changed_when: false
+
+    - name: Read the agent uid
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ devbox_agent_user }}"
+
+    - name: Run the checks
+      vars:
+        __verify_uid: "{{ ansible_facts['getent_passwd'][devbox_agent_user][1] }}"
+        # A public resolver that is not one of the host's: direct DNS to it
+        # must be refused in enforce mode.
+        __verify_dns_probe: "{{ ['1.1.1.1', '9.9.9.9', '8.8.8.8'] | difference(ansible_facts['dns']['nameservers'] | default([])) | first }}"
+      block:
+        - name: Create a temporary directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: devbox-verify.
+          register: __verify_tmp
+
+        - name: Copy the agent checks
+          ansible.builtin.copy:
+            src: verify/agent-checks.sh
+            dest: "{{ __verify_tmp.path }}/agent-checks"
+            mode: "0755"
+
+        - name: Make the directory readable by the agent
+          ansible.builtin.file:
+            path: "{{ __verify_tmp.path }}"
+            mode: "0755"
+
+        - name: Start a throwaway admin-owned loopback listener
+          ansible.builtin.shell: |
+            set -euo pipefail
+            port=$(python3 -I -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+            systemd-run --quiet --unit=devbox-verify-listener --collect -p RuntimeMaxSec=300 \
+              python3 -I -m http.server "$port" --bind 127.0.0.1 --directory "{{ __verify_tmp.path }}" >/dev/null
+            echo "$port"
+          args:
+            executable: /bin/bash
+          register: __verify_listener
+          changed_when: false
+
+        - name: Run the checks as the agent, inside its slice
+          ansible.builtin.command:
+            argv:
+              - systemd-run
+              - --quiet
+              - --wait
+              - --pipe
+              - "--uid={{ devbox_agent_user }}"
+              - "--working-directory=/"
+              - "-p"
+              - "Slice=user-{{ __verify_uid }}.slice"
+              - "-p"
+              - "EnvironmentFile={{ __devbox_agent_env_path }}"
+              - "-p"
+              - "Environment=DEVBOX_MODE={{ devbox_mode }}"
+              - "{{ __verify_tmp.path }}/agent-checks"
+              - "{{ __verify_listener.stdout }}"
+              - "{{ devbox_obs_gateway_port if devbox_monitoring_enabled | bool else 0 }}"
+              - "{{ devbox_proxy_management_port }}"
+              - "{{ __verify_dns_probe }}"
+          register: __verify_agent
+          changed_when: false
+          failed_when: false
+
+        - name: Report
+          ansible.builtin.debug:
+            msg: "{{ __verify_agent.stdout_lines }}"
+
+        - name: Fail on any failed check
+          ansible.builtin.assert:
+            that: __verify_agent.rc == 0
+            fail_msg: "{{ __verify_agent.stdout_lines | select('match', '^FAIL') | list }}"
+            quiet: true
+      always:
+        - name: Stop the listener  # noqa: command-instead-of-module (transient unit may be gone)
+          ansible.builtin.command: systemctl stop devbox-verify-listener
+          changed_when: false
+          failed_when: false
+
+        - name: Remove the temporary directory
+          ansible.builtin.file:
+            path: "{{ __verify_tmp.path }}"
+            state: absent
+          when: __verify_tmp.path is defined

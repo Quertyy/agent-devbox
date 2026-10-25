@@ -1,0 +1,11 @@
+# Managed by agent-devbox (agent_env role).
+[Unit]
+Description=Watch the system CA bundle for the agent bundle
+
+[Path]
+PathChanged={{ __devbox_system_ca_bundle }}
+PathChanged={{ __devbox_ca_public_path }}
+Unit=iron-proxy-agent-bundle.service
+
+[Install]
+WantedBy=multi-user.target

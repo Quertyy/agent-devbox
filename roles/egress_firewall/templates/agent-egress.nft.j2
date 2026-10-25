@@ -1,0 +1,161 @@
+#!/usr/sbin/nft -f
+# Managed by agent-devbox (egress_firewall role). Mode: {{ devbox_mode }}.
+#
+# Egress policy for the agent user ({{ devbox_agent_user }}) and for iron-proxy
+# ({{ devbox_proxy_user }}). Only this table is touched: ufw, firewalld,
+# docker and tailscale rulesets are left alone. Everything refused is logged
+# (rate-limited) with the prefix "agent-egress:" or "proxy-egress:"; in
+# observe mode it is logged and then accepted.
+{% set dns4 = __egress_firewall_dns_remote | select('devbox_ip_version_is', 4) | list %}
+{% set dns6 = __egress_firewall_dns_remote | select('devbox_ip_version_is', 6) | list %}
+{% macro l4(proto) -%}{{ 'meta l4proto { tcp, udp } th' if proto == 'both' else proto }}
+{%- endmacro %}
+{% macro dns_rules() %}{% set out %}
+{% if dns4 %}
+    ip daddr @dns4 meta l4proto { tcp, udp } th dport 53 accept
+{% endif %}
+{% if dns6 %}
+    ip6 daddr @dns6 meta l4proto { tcp, udp } th dport 53 accept
+{% endif %}
+{% endset %}{{ out.rstrip() }}{% endmacro %}
+{% macro by_family(cidrs, match) %}{% set out %}
+{% for v in [4, 6] %}
+{% set c = cidrs | select('devbox_ip_version_is', v) | list %}
+{% if c %}
+    {{ 'ip' if v == 4 else 'ip6' }} daddr { {{ c | join(', ') }} } {{ match }} accept
+{% endif %}
+{% endfor %}
+{% endset %}{{ out.rstrip() }}{% endmacro %}
+{% macro verdict(prefix) %}{% set out %}
+    limit rate 20/second burst 50 packets log prefix "{{ prefix }}: " level info
+{% if devbox_mode == 'enforce' %}
+    meta l4proto tcp reject with tcp reset
+    reject with icmpx type admin-prohibited
+{% else %}
+    accept
+{% endif %}
+{% endset %}{{ out.rstrip() }}{% endmacro %}
+
+table inet agent_egress
+delete table inet agent_egress
+
+table inet agent_egress {
+  set agent_lo_ports {
+    type inet_service
+    elements = { {{ __egress_firewall_lo_ports | join(', ') }} }
+  }
+{% if dns4 %}
+  set dns4 { type ipv4_addr; elements = { {{ dns4 | join(', ') }} } }
+{% endif %}
+{% if dns6 %}
+  set dns6 { type ipv6_addr; elements = { {{ dns6 | join(', ') }} } }
+{% endif %}
+
+  # The agent's direct :443/:80 connections (tools that ignore HTTPS_PROXY)
+  # land on iron-proxy's transparent listeners instead of leaving the host.
+  # IPv4 only: IPv6 :443 is rejected in enforce mode, clients fall back to IPv4.
+  chain nat_out {
+    type nat hook output priority dstnat; policy accept;
+    meta skuid "{{ devbox_agent_user }}" ip daddr != 127.0.0.0/8 tcp dport 443 redirect to :{{ devbox_proxy_https_port }}
+    meta skuid "{{ devbox_agent_user }}" ip daddr != 127.0.0.0/8 tcp dport 80 redirect to :{{ devbox_proxy_http_port }}
+  }
+
+  chain out {
+    type filter hook output priority filter; policy accept;
+    meta skuid "{{ devbox_agent_user }}" jump agent_out
+    meta skuid "{{ devbox_proxy_user }}" jump proxy_out
+  }
+
+  chain agent_out {
+    # Tag agent packets so agent_lo can police loopback on arrival.
+    meta mark set meta mark | {{ __devbox_agent_mark }}
+    # Loopback (including connections redirected by nat_out, which still carry
+    # their original output interface here) is policed on arrival by agent_lo.
+    oif "lo" accept
+    ip daddr 127.0.0.0/8 accept
+    ip6 daddr ::1 accept
+    ct state established,related accept
+{% if devbox_agent_dns | bool %}
+{{ dns_rules() }}
+{% endif %}
+{% for e in __egress_firewall_direct %}
+    # {{ e.name }}
+{% if e.cidrs | default([]) | length == 0 %}
+    {{ l4(e.proto) }} dport { {{ e.ports | join(', ') }} } accept
+{% else %}
+{{ by_family(e.cidrs, l4(e.proto) ~ ' dport { ' ~ (e.ports | join(', ')) ~ ' }') }}
+{% endif %}
+{% endfor %}
+    jump verdict_agent
+  }
+
+  chain proxy_out {
+    oif "lo" accept
+    ct state established,related accept
+{{ dns_rules() }}
+    tcp dport { 80, 443 } accept
+{% for e in devbox_proxy_direct_egress %}
+{{ by_family(e.cidrs, 'tcp dport { ' ~ (e.ports | join(', ')) ~ ' }') }}
+{% endfor %}
+    jump verdict_proxy
+  }
+
+  chain in {
+    type filter hook input priority filter; policy accept;
+    iif "lo" meta mark & {{ __devbox_agent_mark }} == {{ __devbox_agent_mark }} ct state new jump agent_lo
+    # New connections from outside the host to the agent's own sockets.
+    iif != "lo" ct state new socket cgroupv2 level 2 "user.slice/user-{{ __devbox_agent_uid }}.slice" jump agent_in
+  }
+
+  # A new loopback connection from the agent may reach iron-proxy, the
+  # explicitly shared ports, or a socket owned by one of the agent's own
+  # processes (any port: test servers, T3, dev servers). Everything else on
+  # loopback (other users' services, IDE servers, management API) is refused.
+  chain agent_lo {
+    tcp dport @agent_lo_ports accept
+{% if devbox_agent_dns | bool %}
+{% for d in __egress_firewall_dns_loopback %}
+    {{ 'ip' if (d | devbox_ip_version) == 4 else 'ip6' }} daddr {{ d }} meta l4proto { tcp, udp } th dport 53 accept
+{% endfor %}
+{% endif %}
+    socket cgroupv2 level 2 "user.slice/user-{{ __devbox_agent_uid }}.slice" accept
+    jump verdict_agent
+  }
+
+  # Inbound: only the declared ports may accept connections from outside.
+  chain agent_in {
+{% if devbox_agent_inbound_ports | length > 0 %}
+    meta l4proto { tcp, udp } th dport { {{ devbox_agent_inbound_ports | join(', ') }} } accept
+{% endif %}
+    jump verdict_agent_in
+  }
+
+  chain verdict_agent_in {
+{{ verdict('agent-ingress') }}
+  }
+
+  chain verdict_agent {
+{{ verdict('agent-egress') }}
+  }
+
+  chain verdict_proxy {
+{{ verdict('proxy-egress') }}
+  }
+{% if devbox_agent_capture_ports | length > 0 %}
+
+  # agent-capture: copy the agent's own packets on the capture ports to NFLOG
+  # group {{ __devbox_capture_group }} (tcpdump -i nflog:{{ __devbox_capture_group }}).
+  # Other users' traffic never reaches the group.
+  chain capture_out {
+    type filter hook output priority filter - 10; policy accept;
+    meta skuid "{{ devbox_agent_user }}" meta l4proto { tcp, udp } th sport { {{ devbox_agent_capture_ports | join(', ') }} } log group {{ __devbox_capture_group }}
+    meta skuid "{{ devbox_agent_user }}" meta l4proto { tcp, udp } th dport { {{ devbox_agent_capture_ports | join(', ') }} } log group {{ __devbox_capture_group }}
+  }
+
+  chain capture_in {
+    type filter hook input priority filter - 10; policy accept;
+    socket cgroupv2 level 2 "user.slice/user-{{ __devbox_agent_uid }}.slice" meta l4proto { tcp, udp } th sport { {{ devbox_agent_capture_ports | join(', ') }} } log group {{ __devbox_capture_group }}
+    socket cgroupv2 level 2 "user.slice/user-{{ __devbox_agent_uid }}.slice" meta l4proto { tcp, udp } th dport { {{ devbox_agent_capture_ports | join(', ') }} } log group {{ __devbox_capture_group }}
+  }
+{% endif %}
+}

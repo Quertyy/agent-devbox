@@ -1,0 +1,8 @@
+# Managed by agent-devbox (agent_env role).
+# Environment of the agent zone, used by sshd (SetEnv), systemd --user
+# (environment.d) and login shells (~/.profile). Tokens here are placeholders:
+# iron-proxy swaps them for the real values at egress. The confinement does
+# not rely on these variables (nftables enforces it); they make tools work.
+{% for k, v in __agent_env | dictsort %}
+{{ k }}={{ v }}
+{% endfor %}

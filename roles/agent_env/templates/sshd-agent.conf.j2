@@ -1,0 +1,14 @@
+# Managed by agent-devbox (agent_env role).
+# SSH sessions of the agent: the agent environment ({{ __devbox_agent_env_path }}),
+# and no way to pull credentials or tunnels in from the client. Local port
+# forwarding stays allowed (IDEs and T3 Code use it to reach the agent's own
+# servers, still subject to the loopback policy).
+Match User {{ devbox_agent_user }}
+    AllowAgentForwarding no
+    AllowStreamLocalForwarding no
+    AllowTcpForwarding local
+    PermitTunnel no
+    X11Forwarding no
+{% for k, v in __agent_env | dictsort %}
+    SetEnv {{ k }}={{ v }}
+{% endfor %}

@@ -1,0 +1,10 @@
+profile: production
+exclude_paths:
+  - inventory/
+  - .venv/
+  - .cache/
+# Public settings deliberately share one prefix (devbox_) across roles: they
+# form a single host configuration (roles/common/meta/argument_specs.yml).
+# Internal variables use __devbox_* / __<role>_*.
+skip_list:
+  - var-naming[no-role-prefix]

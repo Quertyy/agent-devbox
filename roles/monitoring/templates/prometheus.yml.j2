@@ -1,0 +1,20 @@
+# Managed by agent-devbox (monitoring role).
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+rule_files:
+  - {{ __devbox_config_dir }}/monitoring/alerts.yml
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["127.0.0.1:{{ monitoring_ports.prometheus }}"] }]
+  - job_name: node
+    static_configs: [{ targets: ["127.0.0.1:{{ monitoring_ports.node_exporter }}"] }]
+  - job_name: loki
+    static_configs: [{ targets: ["127.0.0.1:{{ monitoring_ports.loki }}"] }]
+  - job_name: alloy
+    static_configs: [{ targets: ["127.0.0.1:{{ monitoring_ports.alloy }}"] }]
+{% for t in devbox_monitoring_scrape_targets %}
+  - job_name: {{ t.job | to_json }}
+    metrics_path: {{ t.path | default('/metrics') | to_json }}
+    static_configs: [{ targets: {{ t.targets | to_json }} }]
+{% endfor %}

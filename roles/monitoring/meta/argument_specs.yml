@@ -1,0 +1,10 @@
+argument_specs:
+  main:
+    short_description: Monitoring stack (advanced settings)
+    options:
+      monitoring_releases:
+        type: dict
+        description: "Pinned releases: version, url template and sha256 per architecture for prometheus, node_exporter, loki, alloy and grafana."
+      monitoring_ports:
+        type: dict
+        description: Loopback ports of prometheus, node_exporter, loki, loki_grpc and alloy.

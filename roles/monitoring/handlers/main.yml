@@ -1,0 +1,12 @@
+- name: Restart prometheus
+  ansible.builtin.systemd_service: { name: devbox-prometheus, state: restarted, daemon_reload: true }
+- name: Restart node_exporter
+  ansible.builtin.systemd_service: { name: devbox-node-exporter, state: restarted, daemon_reload: true }
+- name: Restart loki
+  ansible.builtin.systemd_service: { name: devbox-loki, state: restarted, daemon_reload: true }
+- name: Restart alloy
+  ansible.builtin.systemd_service: { name: devbox-alloy, state: restarted, daemon_reload: true }
+- name: Restart grafana
+  ansible.builtin.systemd_service: { name: devbox-grafana, state: restarted, daemon_reload: true }
+- name: Restart obs_gateway
+  ansible.builtin.systemd_service: { name: devbox-obs-gateway, state: restarted, daemon_reload: true }

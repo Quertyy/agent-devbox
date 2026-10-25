@@ -1,0 +1,12 @@
+# Drop-ins are validated before they are written; this checks the whole
+# configuration before reloading a running sshd.
+- name: Reload sshd
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: true
+  notify: Apply sshd reload
+
+- name: Apply sshd reload
+  ansible.builtin.systemd_service:
+    name: "{{ __devbox_ssh_service }}"
+    state: reloaded
+  when: ansible_facts['services'][__devbox_ssh_service ~ '.service'].state | default('') == 'running'

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Managed by agent-devbox (agent_helpers role).
+# Capture the agent's own traffic on ports {{ devbox_agent_capture_ports | join(', ') }}:
+#   sudo agent-capture [seconds]   (1-600, default 60)
+# Packets come from NFLOG group {{ __devbox_capture_group }}, fed by the egress policy with the
+# agent's packets only: other users' traffic is never captured. The pcap is
+# written by tcpdump after it drops to the agent user.
+set -euo pipefail
+[[ $EUID -eq 0 ]] || { echo "usage: sudo agent-capture [seconds]" >&2; exit 1; }
+secs=${1:-60}
+[[ $secs =~ ^[0-9]{1,3}$ ]] && (( secs >= 1 && secs <= 600 )) || { echo "agent-capture: duration 1-600 s" >&2; exit 2; }
+cd /
+out=/var/lib/agent-captures
+find "$out" -name 'capture-*.pcap*' -mtime +7 -delete
+file="$out/capture-$(date -u +%Y%m%dT%H%M%SZ).pcap"
+logger -t agent-capture "user=${SUDO_USER:-root} seconds=$secs file=$file"
+# -Z: drop to the agent right after opening the source; -C/-W: one file, 200 MB max.
+timeout "$secs" tcpdump -i nflog:{{ __devbox_capture_group }} -n -s 0 -C 200 -W 1 -Z {{ devbox_agent_user }} -w "$file" || [[ $? -eq 124 ]]
+ls -l "$file"*

@@ -1,0 +1,5 @@
+# environment.d is read when the user manager starts or reloads. Services that
+# are already running keep their old environment until they restart.
+- name: Reload the agent's user manager  # noqa: command-instead-of-module (no --machine in the module)
+  ansible.builtin.command: systemctl --user --machine={{ devbox_agent_user }}@ daemon-reload
+  changed_when: true

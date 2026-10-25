@@ -1,0 +1,65 @@
+# nftables policy per UID for the agent and for iron-proxy. Only touches its
+# own table (inet agent_egress).
+
+- name: Re-read DNS servers (Tailscale may have changed them)
+  ansible.builtin.setup:
+    gather_subset: [dns]
+    filter: [ansible_dns]
+
+- name: Resolve exceptions, DNS servers and loopback ports
+  ansible.builtin.set_fact:
+    __egress_firewall_direct: "{{ devbox_agent_direct_egress | devbox_direct_egress(egress_firewall_presets) }}"
+    __egress_firewall_dns_loopback: >-
+      {{ ansible_facts['dns']['nameservers'] | default([]) | map('devbox_strip_scope') | select('devbox_ip_loopback') | unique | list }}
+    __egress_firewall_dns_remote: >-
+      {{ ansible_facts['dns']['nameservers'] | default([]) | map('devbox_strip_scope') | reject('devbox_ip_loopback') | unique | list }}
+    __egress_firewall_lo_ports: >-
+      {{ ([devbox_proxy_tunnel_port, devbox_proxy_https_port, devbox_proxy_http_port]
+          + ([devbox_obs_gateway_port] if devbox_monitoring_enabled | bool else [])
+          + devbox_agent_loopback_ports) | unique }}
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: "{{ __devbox_config_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Render the egress policy
+  ansible.builtin.template:
+    src: agent-egress.nft.j2
+    dest: "{{ __devbox_config_dir }}/agent-egress.nft"
+    mode: "0644"
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload egress firewall
+
+- name: Install the firewall service
+  ansible.builtin.template:
+    src: agent-egress-firewall.service.j2
+    dest: /etc/systemd/system/agent-egress-firewall.service
+    mode: "0644"
+  notify: Reload egress firewall
+
+- name: Create the drop-in directory for the agent's user manager
+  ansible.builtin.file:
+    path: "/etc/systemd/system/user@{{ __devbox_agent_uid }}.service.d"
+    state: directory
+    mode: "0755"
+
+- name: Reload the policy whenever the agent's user manager (re)starts
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/user@{{ __devbox_agent_uid }}.service.d/agent-egress.conf"
+    mode: "0644"
+    content: |
+      # Managed by agent-devbox. The loopback rule matches the agent's cgroup,
+      # which nftables resolves when the policy is loaded: reload it if the
+      # agent's slice was recreated.
+      [Service]
+      ExecStartPost=-+/usr/bin/systemctl --no-block try-reload-or-restart agent-egress-firewall.service
+
+- name: Enable and start the firewall
+  ansible.builtin.systemd_service:
+    name: agent-egress-firewall
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode

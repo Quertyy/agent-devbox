@@ -1,0 +1,33 @@
+# Managed by agent-devbox (agent_helpers role): official archive used by
+# agent-pkg-install. Override with devbox_pkg_apt_sources.
+{% if devbox_pkg_apt_sources | length > 0 %}
+{{ devbox_pkg_apt_sources }}
+{% elif ansible_facts['distribution'] == 'Ubuntu' %}
+{%   set mirror = 'http://archive.ubuntu.com/ubuntu' if __devbox_arch == 'amd64' else 'http://ports.ubuntu.com/ubuntu-ports' %}
+{%   set security = 'http://security.ubuntu.com/ubuntu' if __devbox_arch == 'amd64' else 'http://ports.ubuntu.com/ubuntu-ports' %}
+{%   set rel = ansible_facts['distribution_release'] %}
+Types: deb
+URIs: {{ mirror }}
+Suites: {{ rel }} {{ rel }}-updates
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: {{ security }}
+Suites: {{ rel }}-security
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+{% else %}
+{%   set rel = ansible_facts['distribution_release'] %}
+Types: deb
+URIs: http://deb.debian.org/debian
+Suites: {{ rel }} {{ rel }}-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.debian.org/debian-security
+Suites: {{ rel }}-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+{% endif %}

@@ -1,0 +1,206 @@
+# iron-proxy: pinned binary, MITM CA, generated config, admin commands and a
+# hardened service. The real secrets live in __devbox_secrets_dir, readable
+# by the iron-proxy user only.
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/iron-proxy, group: "{{ devbox_proxy_user }}", mode: "0750" }
+    - { path: "{{ __devbox_ca_dir }}", group: "{{ devbox_proxy_user }}", mode: "0750" }
+    - { path: "{{ __devbox_secrets_dir }}", group: "{{ devbox_proxy_user }}", mode: "0750" }
+    - { path: /usr/local/share/iron-proxy, group: root, mode: "0755" }
+    - { path: "{{ __devbox_cache_dir }}", group: root, mode: "0700" }
+    - { path: "{{ __devbox_cache_dir }}/iron-proxy-{{ iron_proxy_version }}-{{ __devbox_arch }}", group: root, mode: "0700" }
+
+- name: Download the pinned iron-proxy release
+  ansible.builtin.get_url:
+    url: "https://github.com/ironsh/iron-proxy/releases/download/v{{ iron_proxy_version }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
+    dest: "{{ __devbox_cache_dir }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
+    checksum: "sha256:{{ iron_proxy_sha256[__devbox_arch] }}"
+    mode: "0600"
+
+- name: Extract iron-proxy
+  ansible.builtin.unarchive:
+    src: "{{ __devbox_cache_dir }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
+    dest: "{{ __devbox_cache_dir }}/iron-proxy-{{ iron_proxy_version }}-{{ __devbox_arch }}"
+    remote_src: true
+    include: [iron-proxy]
+    creates: "{{ __devbox_cache_dir }}/iron-proxy-{{ iron_proxy_version }}-{{ __devbox_arch }}/iron-proxy"
+  when: not ansible_check_mode
+
+- name: Install the binary
+  ansible.builtin.copy:
+    src: "{{ __devbox_cache_dir }}/iron-proxy-{{ iron_proxy_version }}-{{ __devbox_arch }}/iron-proxy"
+    dest: /usr/local/bin/iron-proxy
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when: not ansible_check_mode
+  notify: Restart iron-proxy
+
+# Generated in a temporary directory and moved into place together, so an
+# interrupted run never leaves a key without its certificate. To rotate the
+# CA, see docs/operations.md.
+- name: Generate the MITM CA (once)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    tmp=$(mktemp -d {{ __devbox_ca_dir }}/.new.XXXXXX)
+    trap 'rm -rf "$tmp"' EXIT
+    umask 0277
+    openssl genrsa -out "$tmp/ca.key" 4096 2>/dev/null
+    umask 0222
+    openssl req -x509 -new -nodes -key "$tmp/ca.key" -sha256 \
+      -days {{ iron_proxy_ca_days }} \
+      -subj "/O=agent-devbox/CN=iron-proxy CA {{ inventory_hostname }}" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -out "$tmp/ca.crt"
+    chgrp {{ devbox_proxy_user }} "$tmp/ca.key" "$tmp/ca.crt"
+    chmod 0440 "$tmp/ca.key"
+    chmod 0444 "$tmp/ca.crt"
+    mv -f "$tmp/ca.key" {{ __devbox_ca_dir }}/ca.key
+    mv -f "$tmp/ca.crt" {{ __devbox_ca_dir }}/ca.crt
+  args:
+    executable: /bin/bash
+    creates: "{{ __devbox_ca_dir }}/ca.crt"
+  notify: Restart iron-proxy
+
+- name: Publish the CA certificate
+  ansible.builtin.copy:
+    src: "{{ __devbox_ca_dir }}/ca.crt"
+    dest: "{{ __devbox_ca_public_path }}"
+    remote_src: true
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: Generate the management API token (once)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    printf 'IRON_MANAGEMENT_API_KEY=%s\nIRON_MANAGEMENT_PORT=%s\n' \
+      "$(openssl rand -hex 32)" {{ devbox_proxy_management_port }} > /etc/iron-proxy/management.env
+  args:
+    executable: /bin/bash
+    creates: /etc/iron-proxy/management.env
+
+- name: Keep the management port in sync
+  ansible.builtin.lineinfile:
+    path: /etc/iron-proxy/management.env
+    regexp: "^IRON_MANAGEMENT_PORT="
+    line: "IRON_MANAGEMENT_PORT={{ devbox_proxy_management_port }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: not ansible_check_mode
+  notify: Restart iron-proxy
+
+- name: Install iron-proxy-reload
+  ansible.builtin.copy:
+    src: iron-proxy-reload
+    dest: /usr/local/sbin/iron-proxy-reload
+    mode: "0755"
+
+- name: Install iron-proxy-set-secret
+  ansible.builtin.template:
+    src: iron-proxy-set-secret.j2
+    dest: /usr/local/sbin/iron-proxy-set-secret
+    mode: "0755"
+
+- name: Build the proxy configuration
+  ansible.builtin.set_fact:
+    __iron_proxy_config: >-
+      {{ {
+           'mode': devbox_mode,
+           'presets': iron_proxy_presets,
+           'selected_presets': devbox_allow_presets,
+           'rules_extra': devbox_allow_rules_extra,
+           'github_write_repos': devbox_github_write_repos,
+           'secrets': __devbox_secrets,
+           'secrets_dir': __devbox_secrets_dir,
+           'deny_cidrs': iron_proxy_deny_cidrs_base + (ansible_facts | devbox_host_networks) + devbox_upstream_deny_cidrs_extra,
+           'allow_cidrs': devbox_upstream_allow_cidrs,
+           'ports': {
+             'tunnel': devbox_proxy_tunnel_port,
+             'https': devbox_proxy_https_port,
+             'http': devbox_proxy_http_port,
+             'metrics': devbox_proxy_metrics_port,
+             'management': devbox_proxy_management_port,
+           },
+           'log_level': iron_proxy_log_level,
+           'ca_cert': __devbox_ca_dir ~ '/ca.crt',
+           'ca_key': __devbox_ca_dir ~ '/ca.key',
+         } | devbox_iron_proxy_config }}
+
+# iron-proxy's reload (POST /v1/reload) only swaps the transform pipeline
+# (allowlist, secrets). Listeners, the upstream deny list, TLS and logging are
+# read at startup: a change there needs a restart. This file holds exactly
+# that part, so its changes trigger a restart and the rest a reload.
+- name: Record the settings that need a restart
+  ansible.builtin.copy:
+    content: "{{ __iron_proxy_config | dict2items | rejectattr('key', 'eq', 'transforms') | items2dict | to_nice_yaml(indent=2, sort_keys=false) }}"
+    dest: /etc/iron-proxy/startup-settings.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart iron-proxy
+
+- name: Render the proxy configuration
+  ansible.builtin.template:
+    src: proxy.yaml.j2
+    dest: /etc/iron-proxy/proxy.yaml
+    owner: root
+    group: "{{ devbox_proxy_user }}"
+    mode: "0640"
+  notify: Reload iron-proxy
+
+- name: Install the service
+  ansible.builtin.template:
+    src: iron-proxy.service.j2
+    dest: /etc/systemd/system/iron-proxy.service
+    mode: "0644"
+  notify: Restart iron-proxy
+
+- name: Enable and start iron-proxy
+  ansible.builtin.systemd_service:
+    name: iron-proxy
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Apply pending iron-proxy changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the tunnel listener
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ devbox_proxy_tunnel_port }}"
+    timeout: 30
+  when: not ansible_check_mode
+
+- name: List stored secrets
+  ansible.builtin.find:
+    paths: "{{ __devbox_secrets_dir }}"
+    file_type: file
+  register: __iron_proxy_stored
+  check_mode: false
+
+- name: Report secrets to store, and stored secrets no longer declared
+  ansible.builtin.debug:
+    msg: >-
+      {% if __iron_proxy_missing %}Secret(s) not set yet, run:
+      {{ __iron_proxy_missing | map('regex_replace', '^', 'sudo iron-proxy-set-secret ') | join('; ') }}.
+      {% endif %}{% if __iron_proxy_orphans %}No longer declared, still on disk (delete if unused):
+      {{ __iron_proxy_orphans | map('regex_replace', '^', __devbox_secrets_dir ~ '/') | join(', ') }}.{% endif %}
+  vars:
+    __iron_proxy_names: >-
+      {{ __iron_proxy_stored.files | map(attribute='path') | map('basename') | reject('match', '^\\.') | list }}
+    __iron_proxy_missing: "{{ __devbox_secrets | map(attribute='name') | difference(__iron_proxy_names) }}"
+    __iron_proxy_orphans: "{{ __iron_proxy_names | difference(__devbox_secrets | map(attribute='name')) }}"
+  when: (__iron_proxy_missing | length > 0) or (__iron_proxy_orphans | length > 0)

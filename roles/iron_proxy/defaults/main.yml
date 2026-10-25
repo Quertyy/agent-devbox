@@ -1,0 +1,9 @@
+# Pinned release. Upstream publishes no signature, only checksums.txt next to
+# the binaries: review the release, then bump the version and both checksums
+# together.
+iron_proxy_version: "0.54.0"
+iron_proxy_sha256:
+  amd64: 54d745b6c6e4a6d6cad1f58644df59487a87d5f037a8ddb7159c0a8e5d57dd4d
+  arm64: 867ebbb1a7ecd4ecdde978b6712dfb1321f20dbb0f49da39b6abd9a66a984473
+iron_proxy_log_level: info
+iron_proxy_ca_days: 730

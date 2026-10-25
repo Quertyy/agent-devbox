@@ -1,0 +1,8 @@
+argument_specs:
+  main:
+    short_description: iron-proxy installation (advanced settings)
+    options:
+      iron_proxy_version: { type: str, description: "iron-proxy release to install (bump with iron_proxy_sha256)." }
+      iron_proxy_sha256: { type: dict, description: "sha256 of the release tarball per architecture (amd64, arm64)." }
+      iron_proxy_log_level: { type: str, choices: [debug, info, warn, error], description: iron-proxy log level. }
+      iron_proxy_ca_days: { type: int, description: "Lifetime of the MITM CA generated on first run (see docs/operations.md to rotate it)." }

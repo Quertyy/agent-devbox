@@ -1,0 +1,5 @@
+- name: Reload egress firewall
+  ansible.builtin.systemd_service:
+    name: agent-egress-firewall
+    state: reloaded
+    daemon_reload: true

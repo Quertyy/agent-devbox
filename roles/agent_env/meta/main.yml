@@ -1,0 +1,3 @@
+# Runs once even when several roles depend on it.
+dependencies:
+  - role: iron_proxy

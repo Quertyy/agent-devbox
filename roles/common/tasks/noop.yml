@@ -1,0 +1,5 @@
+# Loads this role's defaults and vars without running it (used by verify.yml
+# and uninstall.yml: host settings still win, role defaults have the lowest
+# precedence).
+- name: Shared settings loaded
+  ansible.builtin.meta: noop

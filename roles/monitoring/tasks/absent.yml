@@ -1,0 +1,29 @@
+# Removes the monitoring stack (devbox_monitoring_enabled: false). Collected
+# metrics and logs are deleted too.
+
+- name: Stop and disable the stack
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: >-
+    {{ (monitoring_units.keys() | map('replace', '_', '-') | map('regex_replace', '^(.*)$', 'devbox-\\1.service') | list)
+       + ['devbox-textfile.timer', 'devbox-textfile.service'] }}
+  failed_when: false
+
+- name: Remove units, binaries, configuration and data
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {{ (monitoring_units.keys() | map('replace', '_', '-') | map('regex_replace', '^(.*)$', '/etc/systemd/system/devbox-\1.service') | list)
+       + ['/etc/systemd/system/devbox-textfile.service', '/etc/systemd/system/devbox-textfile.timer',
+          '/usr/local/sbin/devbox-obs-gateway', '/usr/local/sbin/devbox-textfile',
+          __devbox_config_dir ~ '/monitoring', __devbox_config_dir ~ '/grafana.env',
+          '/var/lib/agent-devbox/textfile', '/opt/agent-devbox']
+       + (['prometheus', 'loki', 'alloy', 'grafana'] | map('regex_replace', '^(.*)$', '/var/lib/private/devbox-\1') | list)
+       + (['prometheus', 'loki', 'alloy', 'grafana'] | map('regex_replace', '^(.*)$', '/var/lib/devbox-\1') | list) }}
+
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true

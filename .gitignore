@@ -1,0 +1,8 @@
+# Your own inventory lives here (or in a separate private repo).
+inventory/*
+!inventory/.gitkeep
+*.retry
+.cache/
+__pycache__/
+.venv/
+.pytest_cache/

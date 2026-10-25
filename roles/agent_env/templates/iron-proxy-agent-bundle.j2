@@ -1,0 +1,14 @@
+#!/bin/sh
+# Managed by agent-devbox. Agent CA bundle = system roots + iron-proxy CA.
+# Prints "updated" when the bundle changed.
+set -e
+out={{ __devbox_ca_bundle_path }}
+cat {{ __devbox_system_ca_bundle }} {{ __devbox_ca_public_path }} > "$out.tmp"
+chmod 0644 "$out.tmp"
+# sha256sum (coreutils) rather than cmp, which minimal images lack.
+if [ -f "$out" ] && [ "$(sha256sum < "$out.tmp")" = "$(sha256sum < "$out")" ]; then
+  rm -f "$out.tmp"
+else
+  mv -f "$out.tmp" "$out"
+  echo updated
+fi

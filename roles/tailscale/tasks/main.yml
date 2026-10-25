@@ -1,0 +1,139 @@
+# Tailscale for the admin side: SSH and Grafana over the tailnet. The agent
+# gets no tailnet access (100.64.0.0/10 and fd7a:115c:a1e0::/48 stay denied
+# for iron-proxy and outside the nftables policy) unless a CIDR exception is
+# configured.
+
+- name: Check whether Tailscale is installed
+  ansible.builtin.stat:
+    path: /usr/bin/tailscale
+  register: __tailscale_bin
+
+- name: Add the Tailscale apt repository
+  when: not __tailscale_bin.stat.exists and ansible_facts['os_family'] == 'Debian'
+  block:
+    - name: Install the Tailscale signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/{{ ansible_facts['distribution'] | lower }}/{{ ansible_facts['distribution_release'] }}.noarmor.gpg"
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add the repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        mode: "0644"
+        content: >
+          deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg]
+          https://pkgs.tailscale.com/stable/{{ ansible_facts['distribution'] | lower }} {{ ansible_facts['distribution_release'] }} main
+
+    - name: Refresh apt
+      ansible.builtin.apt:
+        update_cache: true
+
+- name: Add the Tailscale dnf repository
+  ansible.builtin.yum_repository:
+    name: tailscale-stable
+    description: Tailscale stable
+    baseurl: "https://pkgs.tailscale.com/stable/{{ __tailscale_rpm_path }}/$basearch"
+    gpgkey: "https://pkgs.tailscale.com/stable/{{ __tailscale_rpm_path }}/repo.gpg"
+    gpgcheck: true
+    repo_gpgcheck: true
+  vars:
+    __tailscale_rpm_path: "{{ 'fedora' if ansible_facts['distribution'] == 'Fedora' else 'rhel/' ~ ansible_facts['distribution_major_version'] }}"
+  when: not __tailscale_bin.stat.exists and ansible_facts['os_family'] == 'RedHat'
+
+- name: Install Tailscale
+  ansible.builtin.package:
+    name: tailscale
+    state: present
+
+- name: Enable tailscaled
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Read the Tailscale state
+  ansible.builtin.command: tailscale status --json --peers=false
+  register: __tailscale_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Parse the Tailscale state
+  ansible.builtin.set_fact:
+    __tailscale: "{{ __tailscale_status.stdout | from_json if __tailscale_status.rc == 0 else {} }}"
+
+- name: Look for a one-shot auth key
+  ansible.builtin.stat:
+    path: "{{ devbox_tailscale_authkey_file }}"
+  register: __tailscale_authkey
+
+- name: Join the tailnet with the auth key
+  when: __tailscale.BackendState | default('') != 'Running' and __tailscale_authkey.stat.exists
+  block:
+    - name: Run tailscale up
+      ansible.builtin.command:
+        argv: >-
+          {{ ['tailscale', 'up', '--authkey=file:' ~ devbox_tailscale_authkey_file, '--hostname=' ~ devbox_tailscale_hostname]
+             + (['--advertise-tags=' ~ (devbox_tailscale_tags | join(','))] if devbox_tailscale_tags else [])
+             + (['--ssh'] if devbox_tailscale_ssh | bool else []) }}
+      changed_when: true
+
+    - name: Remove the consumed auth key
+      ansible.builtin.file:
+        path: "{{ devbox_tailscale_authkey_file }}"
+        state: absent
+
+    - name: Re-read the Tailscale state after joining
+      ansible.builtin.command: tailscale status --json --peers=false
+      register: __tailscale_status
+      changed_when: false
+      check_mode: false
+
+    - name: Parse the new Tailscale state
+      ansible.builtin.set_fact:
+        __tailscale: "{{ __tailscale_status.stdout | from_json }}"
+
+- name: Explain how to join manually
+  ansible.builtin.debug:
+    msg: >-
+      Tailscale is installed but not connected. Run `sudo tailscale up
+      --hostname={{ devbox_tailscale_hostname }}` on the server (or put a
+      one-shot auth key in {{ devbox_tailscale_authkey_file }}) and re-run.
+  when: __tailscale.BackendState | default('') != 'Running'
+
+- name: Read the Tailscale preferences
+  ansible.builtin.command: tailscale debug prefs
+  register: __tailscale_prefs
+  changed_when: false
+  check_mode: false
+  when: __tailscale.BackendState | default('') == 'Running'
+
+- name: Keep Tailscale SSH as configured
+  ansible.builtin.command: tailscale set --ssh={{ devbox_tailscale_ssh | bool | lower }}
+  when:
+    - __tailscale.BackendState | default('') == 'Running'
+    - (__tailscale_prefs.stdout | from_json).RunSSH | default(false) != (devbox_tailscale_ssh | bool)
+  changed_when: true
+
+- name: Publish Grafana on the tailnet
+  when:
+    - devbox_tailscale_serve_grafana | bool and devbox_monitoring_enabled | bool
+    - __tailscale.BackendState | default('') == 'Running'
+  block:
+    - name: Read the current serve config
+      ansible.builtin.command: tailscale serve status --json
+      register: __tailscale_serve
+      changed_when: false
+      check_mode: false
+
+    - name: Serve Grafana over HTTPS (tailnet only)
+      ansible.builtin.command: tailscale serve --bg --https=443 http://{{ devbox_grafana_listen }}
+      when: ('http://' ~ devbox_grafana_listen) not in __tailscale_serve.stdout
+      changed_when: true
+
+    - name: Remember Grafana's tailnet URL
+      ansible.builtin.set_fact:
+        __devbox_grafana_public_url: "https://{{ __tailscale.Self.DNSName | regex_replace('\\.$', '') }}/"
+      when: __tailscale.Self.DNSName | default('') | length > 0

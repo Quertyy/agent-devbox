@@ -1,0 +1,4 @@
+# Managed by agent-devbox (iron_proxy role). Do not edit: change the host
+# configuration and re-run the playbook.
+# Mode: {{ devbox_mode }}{{ ' (the allowlist only logs, nothing is blocked)' if devbox_mode == 'observe' else '' }}
+{{ __iron_proxy_config | to_nice_yaml(indent=2, width=4096, sort_keys=false) }}

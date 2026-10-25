@@ -1,0 +1,247 @@
+# Schema of the host configuration. Validated when the playbook starts
+# (unknown sub-keys and wrong types are refused) and rendered into
+# docs/configuration.md by tools/gen-config-doc.py. Defaults live in
+# defaults/main.yml.
+argument_specs:
+  main:
+    short_description: Shared settings of agent-devbox
+    options:
+      devbox_mode:
+        type: str
+        choices: [observe, enforce]
+        description: >-
+          observe: nothing is blocked, everything that would be is logged
+          (iron-proxy audit "warn", kernel log "agent-egress:"). enforce:
+          default-deny for real. Start with observe.
+      devbox_admin_user:
+        type: str
+        required: true
+        description: >-
+          Your existing admin login on the server. It is never modified, except
+          for joining devbox_share_group. It must already have an SSH key in
+          ~/.ssh/authorized_keys when devbox_harden_sshd is on.
+      devbox_agent_user:
+        type: str
+        description: >-
+          The confined user that runs the agents. Created if missing. If it
+          already exists, its supplementary groups are reset to
+          devbox_share_group only and its password is locked.
+      devbox_agent_ssh_keys:
+        type: list
+        elements: str
+        description: >-
+          Public keys allowed to log in as the agent (your laptop, T3 Code
+          desktop/mobile...). The list is exclusive: keys not listed are
+          removed, an empty list removes them all.
+      devbox_share_group:
+        type: str
+        description: Group shared by the admin and the agent for the workspaces.
+      devbox_workspace_root:
+        type: path
+        description: Shared workspace directory (group devbox_share_group, setgid).
+      devbox_proxy_user:
+        type: str
+        description: System user running iron-proxy and owning the real secrets.
+      devbox_harden_sshd:
+        type: bool
+        description: >-
+          Disable SSH password and root login for every user. Refused if the
+          admin has no authorized key, so you cannot lock yourself out.
+      devbox_builtin_secrets:
+        type: list
+        elements: str
+        choices: [claude_oauth, github_pat]
+        description: >-
+          Built-in swapped secrets. claude_oauth: Claude subscription token
+          (claude setup-token), placeholder in CLAUDE_CODE_OAUTH_TOKEN.
+          github_pat: GitHub token for git over HTTPS and gh, placeholder in
+          GH_TOKEN/GITHUB_TOKEN. Store values with sudo iron-proxy-set-secret.
+      devbox_secrets:
+        type: list
+        elements: dict
+        description: Additional secrets swapped by iron-proxy (API keys of services your code calls).
+        options:
+          name:
+            type: str
+            required: true
+            description: "File name under /etc/iron-proxy/secrets ([a-z0-9_])."
+          proxy_value:
+            type: str
+            required: true
+            description: Placeholder the agent sends (put it in the project's .env). At least 8 characters.
+          hosts:
+            type: list
+            elements: str
+            required: true
+            description: Hosts (globs allowed) for which the placeholder is replaced.
+          match_headers:
+            type: list
+            elements: str
+            description: Headers to scan (e.g. Authorization, X-Api-Key).
+          match_path:
+            type: bool
+            description: Also replace the placeholder in the URL path.
+          match_query:
+            type: bool
+            description: Also replace the placeholder in the query string.
+          match_body:
+            type: bool
+            description: Also replace the placeholder in request bodies.
+          allow:
+            type: bool
+            description: Also add the hosts to the allowlist.
+          pattern:
+            type: str
+            description: Regex the real value must match (checked by iron-proxy-set-secret).
+      devbox_allow_presets:
+        type: list
+        elements: str
+        description: Allowlist presets, see the Presets table at the end of docs/configuration.md.
+      devbox_allow_rules_extra:
+        type: list
+        elements: dict
+        description: Additional iron-proxy allowlist rules.
+        options:
+          host: { type: str, description: "Host glob, e.g. api.example.com or *.example.com." }
+          cidr: { type: str, description: Destination network instead of a host. }
+          methods: { type: list, elements: str, description: "Allowed methods (default: all)." }
+          paths: { type: list, elements: str, description: "Allowed paths, '/*' suffix for prefixes (default: all)." }
+      devbox_github_write_repos:
+        type: list
+        elements: str
+        description: >-
+          owner/repo the agent may push to and write through the REST API.
+          GraphQL (used by gh) is bounded by the token's own permissions:
+          limit the fine-grained PAT to the same repositories.
+      devbox_git_ssh_aliases:
+        type: list
+        elements: str
+        description: SSH host aliases used in clones (git@alias:owner/repo) that the agent rewrites to HTTPS.
+      devbox_upstream_deny_cidrs_extra:
+        type: list
+        elements: str
+        description: Networks iron-proxy must never dial, on top of the built-in list.
+      devbox_upstream_allow_cidrs:
+        type: list
+        elements: str
+        description: >-
+          Exceptions carved out of the deny list (e.g. one internal host). Loopback,
+          link-local and metadata ranges are refused, as are networks broader than /8 (/32 for IPv6).
+      devbox_agent_dns:
+        type: bool
+        description: >-
+          Let the agent send DNS packets (UDP/TCP 53) to the host's resolvers.
+          Needed by tools that resolve names themselves over the network
+          (dig, some direct-egress clients). It does not control name lookups
+          through the local resolver's socket (systemd-resolved, nscd), which
+          keep working either way. DNS queries are not audited and can carry
+          data out.
+      devbox_agent_direct_egress:
+        type: list
+        elements: dict
+        description: Non-HTTP egress for the agent, bypassing iron-proxy. Keep it narrow.
+        options:
+          preset: { type: str, choices: [cloudflare_tunnel], description: Use a predefined exception instead of the fields below. }
+          name: { type: str, description: Label shown in the policy. }
+          proto: { type: str, choices: [tcp, udp, both] }
+          ports: { type: list, elements: raw, description: "Ports or ranges (\"5000-5010\")." }
+          cidrs: { type: list, elements: str, description: Allowed destinations; omitted means any destination. }
+      devbox_proxy_direct_egress:
+        type: list
+        elements: dict
+        description: Ports other than 80/443 iron-proxy may reach (pair with an allow rule).
+        options:
+          cidrs: { type: list, elements: str, required: true }
+          ports: { type: list, elements: raw, required: true }
+      devbox_agent_inbound_ports:
+        type: list
+        elements: raw
+        description: >-
+          Ports (or ranges) on which the agent's own servers accept connections
+          from outside the host (e.g. a P2P node). New inbound connections to
+          any other agent-owned socket are refused in enforce mode, logged in
+          observe mode; your provider firewall applies on top.
+      devbox_agent_loopback_ports:
+        type: list
+        elements: int
+        description: Loopback TCP ports owned by other users that the agent may reach.
+      devbox_agent_clis:
+        type: list
+        elements: str
+        choices: [claude, codex, hermes]
+        description: >-
+          Agents installed for the agent user through the proxy (official
+          installers / latest release, not pinned; they update themselves).
+          See docs/agents.md.
+      devbox_agent_env_extra:
+        type: dict
+        description: Extra environment variables for the agent (names [A-Za-z_][A-Za-z0-9_]*, values without spaces or quotes).
+      devbox_agent_pkg_install:
+        type: bool
+        description: Install sudo agent-pkg-install (distribution packages from official repositories only).
+      devbox_pkg_apt_sources:
+        type: str
+        description: >-
+          deb822 sources used by agent-pkg-install on apt systems. Empty: the
+          official Debian/Ubuntu archive for this release.
+      devbox_pkg_dnf_repos:
+        type: list
+        elements: str
+        description: Repositories agent-pkg-install may use on dnf systems.
+      devbox_agent_capture_ports:
+        type: list
+        elements: raw
+        description: >-
+          Enable sudo agent-capture [seconds]: pcap of the agent's own traffic
+          on these ports (nothing from other users).
+      devbox_monitoring_enabled:
+        type: bool
+        description: Prometheus, Loki, Grafana, Alloy and node_exporter on 127.0.0.1; disabling removes them.
+      devbox_monitoring_retention:
+        type: str
+        description: Metrics and logs retention (e.g. 30d).
+      devbox_grafana_listen:
+        type: str
+        description: Grafana address (host:port), loopback by default.
+      devbox_monitoring_scrape_targets:
+        type: list
+        elements: dict
+        description: >-
+          Extra Prometheus scrape targets (e.g. an app's /metrics). The agent
+          can query every metric through its gateway.
+        options:
+          job: { type: str, required: true }
+          targets: { type: list, elements: str, required: true }
+          path: { type: str, description: "Metrics path (default /metrics)." }
+      devbox_monitoring_journal_units_extra:
+        type: list
+        elements: str
+        description: >-
+          Extra system units whose logs are shipped to Loki, without the
+          ".service" suffix (e.g. nginx). The agent can read Loki through its
+          gateway: only add units whose logs it may see.
+      devbox_tailscale_enabled:
+        type: bool
+        description: Install Tailscale and join the tailnet (admin side; the agent gets no tailnet access).
+      devbox_tailscale_hostname:
+        type: str
+        description: Machine name on the tailnet.
+      devbox_tailscale_tags:
+        type: list
+        elements: str
+        description: Tags to advertise (must be allowed by your ACL tagOwners).
+      devbox_tailscale_ssh:
+        type: bool
+        description: Enable Tailscale SSH on top of OpenSSH.
+      devbox_tailscale_authkey_file:
+        type: path
+        description: One-shot auth key file on the server, consumed and deleted at join.
+      devbox_tailscale_serve_grafana:
+        type: bool
+        description: Publish Grafana at https://<host>.<tailnet>.ts.net (tailnet only).
+      devbox_proxy_tunnel_port: { type: int, description: iron-proxy explicit proxy port (HTTPS_PROXY). }
+      devbox_proxy_https_port: { type: int, description: iron-proxy transparent HTTPS port. }
+      devbox_proxy_http_port: { type: int, description: iron-proxy transparent HTTP port. }
+      devbox_proxy_management_port: { type: int, description: iron-proxy management API port. }
+      devbox_proxy_metrics_port: { type: int, description: iron-proxy health port. }
+      devbox_obs_gateway_port: { type: int, description: Read-only Prometheus/Loki gateway port for the agent. }

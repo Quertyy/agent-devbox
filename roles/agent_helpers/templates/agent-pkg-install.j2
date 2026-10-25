@@ -1,0 +1,70 @@
+#!/bin/bash
+# Managed by agent-devbox (agent_helpers role).
+# Install distribution packages on behalf of the agent:  sudo agent-pkg-install <pkg>...
+# Only bare package names are accepted (no options, versions, paths, URLs,
+# local package files, groups or globs). Only the distribution's official
+# repositories are used, signatures are always checked, and nothing is
+# removed or downgraded.
+set -euo pipefail
+[[ $EUID -eq 0 ]] || { echo "usage: sudo agent-pkg-install <package>..." >&2; exit 1; }
+(( $# >= 1 && $# <= 20 )) || { echo "agent-pkg-install: 1 to 20 packages" >&2; exit 2; }
+for p in "$@"; do
+  if [[ ! $p =~ ^[A-Za-z0-9][A-Za-z0-9+._-]{0,99}$ || $p =~ \.(rpm|deb)$ ]]; then
+    echo "agent-pkg-install: refused package name: $p" >&2; exit 2
+  fi
+done
+refused_re='^({{ __agent_helpers_refused | join("|") }})([:.].*)?$'
+check_refused() {
+  local p
+  for p in "$@"; do
+    if [[ $p =~ $refused_re ]]; then
+      echo "agent-pkg-install: refused: $p would install a relay daemon (mail transport); ask the admin" >&2
+      exit 2
+    fi
+  done
+}
+check_refused "$@"
+# Never resolve anything relative to the caller's directory.
+cd /
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C
+logger -t agent-pkg-install "user=${SUDO_USER:-root} packages=$*"
+{% if __devbox_pkg_backend == 'apt' %}
+export DEBIAN_FRONTEND=noninteractive
+state=/var/lib/agent-pkg
+# Private sources, lists and cache: only the official archive is used and the
+# admin's own apt state is never touched.
+opts=(
+  -o "Dir::Etc::SourceList=/dev/null"
+  -o "Dir::Etc::SourceParts=$state/sources.d"
+  -o "Dir::State::Lists=$state/lists"
+  -o "Dir::Cache=$state/cache"
+  -o "APT::Get::AllowUnauthenticated=false"
+)
+mkdir -p "$state/lists/partial" "$state/cache/archives/partial"
+if [[ -z $(find "$state/lists" -maxdepth 1 -name '*_Packages*' -mmin -360 -print -quit) ]]; then
+  apt-get "${opts[@]}" -q update
+fi
+# apt treats an unknown name containing . or + as a regex ("lib." would match
+# hundreds of packages): accept exact package names only.
+for p in "$@"; do
+  apt-cache "${opts[@]}" --no-generate pkgnames -- "$p" | grep -qxF -- "$p" ||
+    { echo "agent-pkg-install: no package named exactly '$p'" >&2; exit 2; }
+done
+# Refuse anything that would bring a relay daemon (mail transport...), even
+# as a dependency: it would send data out under its own user, outside the
+# agent's egress policy.
+planned=$(apt-get "${opts[@]}" -s -q -y --no-install-recommends --no-remove install "$@" | awk '/^Inst /{print $2}')
+check_refused $planned
+apt-get "${opts[@]}" -q -y --no-install-recommends --no-remove install "$@"
+{% elif __devbox_pkg_backend == 'dnf' %}
+dnf_opts=(--setopt=install_weak_deps=False --setopt=clean_requirements_on_remove=False
+  --setopt=gpgcheck=1 --setopt=localpkg_gpgcheck=1
+  --disablerepo='*' {% for r in devbox_pkg_dnf_repos %}--enablerepo={{ r }} {% endfor %})
+# Refuse anything that would bring a relay daemon (mail transport...), even
+# as a dependency: it would send data out under its own user, outside the
+# agent's egress policy.
+planned=$(dnf "${dnf_opts[@]}" -q --assumeno install "$@" 2>/dev/null |
+  awk '/^Installing( dependencies)?:/{f=1; next} /^[A-Z]/{f=0} f && NF {print $1}' || true)
+check_refused "$@" $planned
+dnf "${dnf_opts[@]}" -y -q install "$@"
+{% endif %}

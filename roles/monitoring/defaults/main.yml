@@ -1,0 +1,39 @@
+# Pinned releases (sha256 from each project's published checksums).
+monitoring_releases:
+  prometheus:
+    version: "3.15.1"
+    url: "https://github.com/prometheus/prometheus/releases/download/v{version}/prometheus-{version}.linux-{arch}.tar.gz"
+    sha256:
+      amd64: 6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84
+      arm64: ceb6d21493c37ca0b4513b147642797c68cf39a0f50a444d50e1e80c74f21b26
+  node_exporter:
+    version: "1.12.1"
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{version}/node_exporter-{version}.linux-{arch}.tar.gz"
+    sha256:
+      amd64: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+      arm64: ad35b605f9954b9f1ffddf5ba054bdc5a98d790b9eae5291e1eeb83f1ecbd0e7
+  loki:
+    version: "3.7.9"
+    url: "https://github.com/grafana/loki/releases/download/v{version}/loki-linux-{arch}.zip"
+    sha256:
+      amd64: 17a5fae28ce733b3560c27c76620920b169bd2aea9473947b733b511f92e81dd
+      arm64: f46a623ff261d8579d09dcba545d48e14500bcfbc26caa59628ae465b3b67983
+  alloy:
+    version: "1.21.2"
+    url: "https://github.com/grafana/alloy/releases/download/v{version}/alloy-linux-{arch}.zip"
+    sha256:
+      amd64: 1eadb46a0640127184250173acd9b4145e4d590680db37ffe66fa8afd07f04cf
+      arm64: 3722a7494bce5ff100c18f0051e63799ad9e89546ca75022cb1dc8dc676af401
+  grafana:
+    version: "13.2.4"
+    url: "https://dl.grafana.com/oss/release/grafana-{version}.linux-{arch}.tar.gz"
+    sha256:
+      amd64: c48765988fd88572607e4ea670251af8a8e64ab3e360d0f3cf67a6f3587b92ab
+      arm64: 9517a0d21e2706b54521fbd720803698bba42859ca179e9905cc6b8fb05d67ab
+
+monitoring_ports:
+  prometheus: 9090
+  node_exporter: 9100
+  loki: 3100
+  loki_grpc: 9096
+  alloy: 12345
