@@ -16,7 +16,7 @@ The server is split into three **zones**:
 |---|---|---|
 | **admin** | your existing login | sudo, SSH keys, your files: unchanged |
 | **agent** | a dedicated `agent` user running the agents | code, toolchains, *placeholder* tokens only |
-| **proxy** | [iron-proxy](https://github.com/ironsh/iron-proxy), its own system user | the real tokens |
+| **proxy** | [iron-proxy](https://github.com/paradigmxyz/iron-proxy), its own system user | the real tokens |
 
 ```
 agent processes ──HTTPS_PROXY──► iron-proxy ──► allowlisted hosts only

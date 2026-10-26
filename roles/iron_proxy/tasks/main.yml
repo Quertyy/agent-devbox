@@ -19,7 +19,7 @@
 
 - name: Download the pinned iron-proxy release
   ansible.builtin.get_url:
-    url: "https://github.com/ironsh/iron-proxy/releases/download/v{{ iron_proxy_version }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
+    url: "https://github.com/paradigmxyz/iron-proxy/releases/download/v{{ iron_proxy_version }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
     dest: "{{ __devbox_cache_dir }}/iron-proxy_{{ iron_proxy_version }}_linux_{{ __devbox_arch }}.tar.gz"
     checksum: "sha256:{{ iron_proxy_sha256[__devbox_arch] }}"
     mode: "0600"
